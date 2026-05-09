@@ -322,6 +322,18 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
   font-size: 12px; color: var(--muted); flex-shrink: 0;
 }
 
+/* ── Auto-fill button ── */
+.autofill-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: rgba(124,106,247,.15); border: 1px solid rgba(124,106,247,.35);
+  color: var(--accent); border-radius: 7px;
+  padding: 4px 10px; font-size: 11px; font-weight: 600;
+  cursor: pointer; transition: background .15s, border-color .15s;
+  font-family: inherit; white-space: nowrap;
+}
+.autofill-btn:hover { background: rgba(124,106,247,.28); border-color: var(--accent); }
+.autofill-btn:disabled { opacity: .45; cursor: not-allowed; }
+
 /* ── Skipped folders panel ── */
 .skipped-panel {
   background: var(--card); border: 1px solid var(--error);
@@ -387,6 +399,23 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
         platform.postiz.com → Settings → API Key
       </a>
       &nbsp;·&nbsp; Saved locally in your browser.
+    </div>
+  </div>
+
+  <!-- ── Anthropic API Key (for auto-caption) ── -->
+  <div class="card" id="anthropicCard">
+    <div class="section-label" style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      ✨ Claude Auto-Caption &nbsp;<span style="background:rgba(124,106,247,.18);color:var(--accent);border-radius:5px;padding:1px 7px;font-size:10px;font-weight:700">Optional</span>
+    </div>
+    <div class="key-row">
+      <input class="key-input" id="anthropicKeyInput" type="password"
+             placeholder="sk-ant-… (Anthropic API key for ✨ Auto-fill captions)">
+      <button class="btn btn-outline" id="saveAnthropicBtn" onclick="saveAnthropicKey()">Save</button>
+    </div>
+    <div style="margin-top:10px;font-size:12px;color:var(--muted)">
+      Get a key at
+      <a class="link" href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
+      &nbsp;·&nbsp; Used only locally to generate captions from your media.
     </div>
   </div>
 
@@ -492,8 +521,9 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
 // ────────────────────────── State ──────────────────────────────────────────
 const S = {
   apiKey:       localStorage.getItem("postiz_key") || "",
+  anthropicKey: localStorage.getItem("anthropic_key") || "",
   integrations: [],
-  posts:        [],   // see addFiles() / loadSlideshowFromFolder() for shape
+  posts:        [],
   busy:         false
 };
 
@@ -515,8 +545,18 @@ window.addEventListener("DOMContentLoaded", () => {
     document.getElementById("keyInput").value = S.apiKey;
     connect();
   }
+  if (S.anthropicKey) {
+    document.getElementById("anthropicKeyInput").value = S.anthropicKey;
+  }
   initDrop();
 });
+
+function saveAnthropicKey() {
+  const key = document.getElementById("anthropicKeyInput").value.trim();
+  S.anthropicKey = key;
+  if (key) { localStorage.setItem("anthropic_key", key); toast("Anthropic key saved", "ok"); }
+  else      { localStorage.removeItem("anthropic_key"); toast("Anthropic key cleared", "ok"); }
+}
 
 // ────────────────────────── API helpers ────────────────────────────────────
 async function api(method, path, body, isForm) {
@@ -1115,9 +1155,12 @@ function cardHTML(p) {
   ${editable ? `
   <div class="card-body" style="margin-top:14px">
     <div>
-      <div class="field-label">Caption</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
+        <div class="field-label" style="margin:0">Caption</div>
+        <button class="autofill-btn" id="gen-${p.id}" onclick="generateCaption('${p.id}')">✨ Auto-fill</button>
+      </div>
       <textarea class="caption-ta" id="cap-${p.id}" style="min-height:120px"
-        placeholder="Write your caption…">${esc(p.caption)}</textarea>
+        placeholder="Write your caption… or click ✨ Auto-fill">${esc(p.caption)}</textarea>
     </div>
     <div>
       <div class="field-label">Schedule Date &amp; Time</div>
@@ -1154,8 +1197,12 @@ function cardHTML(p) {
   ${editable ? `
   <div class="card-body">
     <div>
-      <div class="field-label">Caption</div>
-      <textarea class="caption-ta" id="cap-${p.id}" placeholder="Write your caption…">${esc(p.caption)}</textarea>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
+        <div class="field-label" style="margin:0">Caption</div>
+        <button class="autofill-btn" id="gen-${p.id}" onclick="generateCaption('${p.id}')">✨ Auto-fill</button>
+      </div>
+      <textarea class="caption-ta" id="cap-${p.id}"
+        placeholder="Write your caption… or click ✨ Auto-fill">${esc(p.caption)}</textarea>
     </div>
     <div>
       <div class="field-label">Schedule Date &amp; Time</div>
@@ -1372,8 +1419,130 @@ function toast(msg, type = "") {
   }, 3800);
 }
 
+// ────────────────────────── Auto-caption (Claude Vision) ───────────────────
+async function generateCaption(postId) {
+  if (!S.anthropicKey) {
+    toast("Add your Anthropic API key in the ✨ Claude Auto-Caption section first", "fail");
+    return;
+  }
+
+  const p = S.posts.find(x => x.id === postId);
+  if (!p) return;
+
+  const btn = byId(`gen-${postId}`);
+  if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spin"></span> Generating…`; }
+
+  try {
+    let imageB64, mediaType;
+
+    if (p.slideshow) {
+      // Use first slide as the reference image
+      if (p.fromFolder) {
+        const resp = await fetch(p.urls[0]);
+        const blob = await resp.blob();
+        mediaType = blob.type || "image/png";
+        imageB64 = await blobToBase64Strip(blob);
+      } else {
+        mediaType = p.files[0].type || "image/png";
+        imageB64 = await fileToBase64Strip(p.files[0]);
+      }
+    } else if (p.file.type.startsWith("video/")) {
+      mediaType  = "image/jpeg";
+      imageB64   = await extractVideoFrame(p.url);
+      if (!imageB64) throw new Error("Could not extract a frame from the video");
+    } else {
+      mediaType = p.file.type || "image/jpeg";
+      imageB64  = await fileToBase64Strip(p.file);
+    }
+
+    // Collect connected platform names for context
+    const platforms = [...new Set(
+      p.accounts.map(id => {
+        const int = S.integrations.find(i => i.id === id);
+        return int ? platform(int) : "";
+      }).filter(Boolean)
+    )];
+
+    const res = await fetch("/api/generate", {
+      method:  "POST",
+      headers: {
+        "Content-Type":    "application/json",
+        "Authorization":   S.apiKey,
+        "X-Anthropic-Key": S.anthropicKey
+      },
+      body: JSON.stringify({ image: imageB64, mediaType, platforms })
+    });
+
+    if (!res.ok) {
+      const t = await res.text().catch(() => res.statusText);
+      throw new Error(t.slice(0, 200));
+    }
+
+    const data = await res.json();
+
+    // Build full caption: hook + blank line + hashtags
+    const parts = [data.caption, data.hashtags].filter(Boolean);
+    p.caption   = parts.join("\n\n").trim();
+    p.postTitle = (data.title || p.postTitle || "").slice(0, 100);
+
+    // Patch textarea and title display live without full re-render
+    const ta = byId(`cap-${postId}`);
+    if (ta) ta.value = p.caption;
+    toast("✨ Caption generated!", "ok");
+
+  } catch (e) {
+    toast("Auto-fill failed: " + e.message, "fail");
+  }
+
+  if (btn) { btn.disabled = false; btn.innerHTML = "✨ Auto-fill"; }
+}
+
+// ── Read a File as base64 (strip data-URL prefix) ──────────────────────────
+function fileToBase64Strip(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = () => resolve(r.result.replace(/^data:[^;]+;base64,/, ""));
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+function blobToBase64Strip(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload  = () => resolve(r.result.replace(/^data:[^;]+;base64,/, ""));
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+// ── Extract a JPEG frame from a video at ~1 s (or midpoint) ────────────────
+function extractVideoFrame(videoUrl) {
+  return new Promise(resolve => {
+    const v = document.createElement("video");
+    v.src = videoUrl; v.muted = true; v.playsInline = true;
+    const done = result => { v.src = ""; resolve(result); };
+    v.onloadeddata = () => { v.currentTime = Math.min(1, (v.duration || 2) / 2); };
+    v.onseeked = () => {
+      try {
+        const MAX = 1024;
+        const sc  = Math.min(1, MAX / Math.max(v.videoWidth || 640, v.videoHeight || 480));
+        const c   = document.createElement("canvas");
+        c.width   = Math.round((v.videoWidth  || 640) * sc);
+        c.height  = Math.round((v.videoHeight || 480) * sc);
+        c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+        done(c.toDataURL("image/jpeg", 0.82).replace(/^data:[^;]+;base64,/, ""));
+      } catch(e) { done(null); }
+    };
+    v.onerror = () => done(null);
+    setTimeout(() => done(null), 8000);
+  });
+}
+
 // Expose for inline onclick / global use
 window.connect                   = connect;
+window.saveAnthropicKey          = saveAnthropicKey;
+window.generateCaption           = generateCaption;
 window.loadIntegrations          = loadIntegrations;
 window.loadSlideshowFromFolder   = loadSlideshowFromFolder;
 window.handleVideoFolderBrowse   = handleVideoFolderBrowse;
@@ -1437,6 +1606,8 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy_post("/posts")
         elif self.path == "/api/upload-from-path":
             self._handle_upload_from_path()
+        elif self.path == "/api/generate":
+            self._handle_generate()
         else:
             self.send_response(404)
             self._cors()
@@ -1567,6 +1738,86 @@ class Handler(BaseHTTPRequestHandler):
         self._cors()
         self.end_headers()
         self.wfile.write(data)
+
+    # ── Claude Vision caption generator ───────────────────────────────────────
+    def _handle_generate(self):
+        """Call Anthropic API with an image and return {title, caption, hashtags}."""
+        import re as _re
+        try:
+            length   = int(self.headers.get("Content-Length", 0))
+            raw      = self.rfile.read(length) if length else self.rfile.read()
+            data     = json.loads(raw)
+
+            image_b64  = data.get("image", "")
+            media_type = data.get("mediaType", "image/jpeg")
+            platforms  = data.get("platforms", [])
+            anth_key   = self.headers.get("X-Anthropic-Key", "").strip()
+
+            if not anth_key:
+                self._err("No Anthropic API key. Add it in the ✨ Claude Auto-Caption section.")
+                return
+            if not image_b64:
+                self._err("No image data received.")
+                return
+
+            platform_str = " and ".join(platforms) if platforms else "Instagram and TikTok"
+
+            prompt = (
+                f"Analyze this image and create social media content optimized for {platform_str}.\n\n"
+                "Return ONLY a JSON object — no markdown, no extra text — with exactly these fields:\n"
+                "{\n"
+                '  "title": "punchy title under 80 chars (good for YouTube/TikTok)",\n'
+                '  "caption": "engaging hook, 2-3 sentences, conversational tone, relevant emojis",\n'
+                '  "hashtags": "#tag1 #tag2 #tag3 ... (15-20 relevant hashtags, space-separated)"\n'
+                "}\n\n"
+                "Caption rules: start with a strong hook, speak directly to the viewer, no generic phrases.\n"
+                "Hashtags: mix of broad (#food) and niche (#sheetpandinners) tags."
+            )
+
+            body = json.dumps({
+                "model": "claude-opus-4-5",
+                "max_tokens": 900,
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image",
+                         "source": {"type": "base64",
+                                    "media_type": media_type,
+                                    "data": image_b64}},
+                        {"type": "text", "text": prompt}
+                    ]
+                }]
+            }).encode()
+
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=body,
+                headers={
+                    "x-api-key":         anth_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type":      "application/json",
+                    "Accept":            "application/json",
+                },
+                method="POST"
+            )
+
+            with urllib.request.urlopen(req, timeout=45) as r:
+                resp = json.loads(r.read())
+
+            text = resp["content"][0]["text"].strip()
+            # Strip markdown code fences if Claude wrapped the JSON
+            text = _re.sub(r"^```(?:json)?\s*", "", text, flags=_re.MULTILINE)
+            text = _re.sub(r"\s*```$",          "", text, flags=_re.MULTILINE)
+            text = text.strip()
+
+            result = json.loads(text)
+            print(f"  [generate] title={result.get('title','')[:50]}")
+            self._ok(json.dumps(result).encode())
+
+        except urllib.error.HTTPError as e:
+            self._forward_error(e)
+        except Exception as e:
+            self._err(str(e))
 
     # ── Server-side upload from disk path ─────────────────────────────────────
     def _handle_upload_from_path(self):
