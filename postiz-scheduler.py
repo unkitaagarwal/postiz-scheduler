@@ -110,11 +110,19 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
   display: flex; align-items: center; gap: 9px;
   background: var(--card2); border: 1px solid var(--border);
   border-radius: 9px; padding: 8px 13px; font-size: 13px;
+  cursor: pointer; user-select: none; transition: all .15s;
 }
+.int-chip:hover:not(.active) { border-color: var(--muted); }
+.int-chip.active {
+  border-color: var(--accent); background: rgba(124,106,247,.14);
+}
+.int-chip.active .int-name { color: var(--accent); }
 .int-chip img { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; }
 .int-chip .pi { font-size: 18px; width: 26px; text-align: center; line-height: 1; }
-.int-name { font-weight: 600; line-height: 1.2; }
+.int-name { font-weight: 600; line-height: 1.2; transition: color .15s; }
 .int-platform { font-size: 11px; color: var(--muted); margin-top: 1px; }
+.int-check { font-size: 13px; margin-left: 2px; opacity: 0; transition: opacity .15s; }
+.int-chip.active .int-check { opacity: 1; }
 
 /* ── Drop zone ── */
 .drop-zone {
@@ -419,12 +427,19 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
     </div>
   </div>
 
-  <!-- ── Connected Accounts ── -->
+  <!-- ── Connected Accounts / Channel Selector ── -->
   <div class="card hidden" id="intCard">
-    <div class="row" style="margin-bottom:14px">
-      <div class="section-label" style="margin:0">Connected Accounts</div>
+    <div class="row" style="margin-bottom:6px">
+      <div class="section-label" style="margin:0">Post To — Select Channels</div>
       <div class="spacer"></div>
+      <button class="btn btn-outline btn-sm" style="padding:5px 10px;font-size:11px"
+              onclick="selectAllChannels()">Select All</button>
+      <button class="btn btn-outline btn-sm" style="padding:5px 10px;font-size:11px"
+              onclick="selectNoneChannels()">Deselect All</button>
       <button class="btn btn-outline btn-sm" onclick="loadIntegrations()">↻ Refresh</button>
+    </div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+      Click to toggle which channels new posts will be sent to. You can also adjust per-post below.
     </div>
     <div class="int-grid" id="intGrid">
       <span style="color:var(--muted);font-size:13px">Loading…</span>
@@ -520,11 +535,12 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
 <script>
 // ────────────────────────── State ──────────────────────────────────────────
 const S = {
-  apiKey:       localStorage.getItem("postiz_key") || "",
-  anthropicKey: localStorage.getItem("anthropic_key") || "",
-  integrations: [],
-  posts:        [],
-  busy:         false
+  apiKey:          localStorage.getItem("postiz_key") || "",
+  anthropicKey:    localStorage.getItem("anthropic_key") || "",
+  integrations:    [],
+  defaultAccounts: new Set(),   // which channels new posts should default to
+  posts:           [],
+  busy:            false
 };
 
 const ICONS = {
@@ -603,6 +619,23 @@ async function loadIntegrations() {
   S.integrations = Array.isArray(data)
     ? data
     : (data.integrations || data.data || data.results || []);
+
+  // On first load, select ALL channels by default.
+  // On refresh, keep existing selection but add any newly discovered channels.
+  if (S.defaultAccounts.size === 0) {
+    S.integrations.forEach(i => S.defaultAccounts.add(i.id));
+  } else {
+    S.integrations.forEach(i => {
+      // auto-add brand-new integrations as selected
+      if (!S.defaultAccounts.has(i.id) &&
+          !S._knownIntegrationIds?.has(i.id)) {
+        S.defaultAccounts.add(i.id);
+      }
+    });
+  }
+  // remember which IDs we've seen so far
+  S._knownIntegrationIds = new Set(S.integrations.map(i => i.id));
+
   renderInts();
   // refresh account chips in any open post cards
   S.posts && renderQueue();
@@ -617,20 +650,52 @@ function renderInts() {
     return;
   }
   g.innerHTML = S.integrations.map(i => {
-    const pl = platform(i);
-    const ic = ICONS[pl] || ICONS.default;
+    const pl  = platform(i);
+    const ic  = ICONS[pl] || ICONS.default;
     const col = COLORS[pl] || COLORS.default;
-    return `<div class="int-chip">
+    const sel = S.defaultAccounts.has(i.id);
+    return `<div class="int-chip ${sel ? "active" : ""}" id="intchip-${i.id}"
+                 onclick="toggleDefaultAcc('${i.id}')" title="Click to toggle channel">
       ${i.picture
         ? `<img src="${i.picture}" onerror="this.style.display='none';this.nextElementSibling.style.display='inline'">`
         : ""}
       <span class="pi" style="${i.picture ? "display:none" : ""}">${ic}</span>
       <div>
         <div class="int-name">${esc(i.name || i.identifier || "Account")}</div>
-        <div class="int-platform" style="color:${col}" title="identifier: ${esc(i.identifier||'')} | type: ${esc(i.type||'')} | provider: ${esc(i.provider||'')}">${pl || "(unknown)"}</div>
+        <div class="int-platform" style="color:${col}"
+             title="identifier: ${esc(i.identifier||'')} | type: ${esc(i.type||'')} | provider: ${esc(i.provider||'')}">${pl || "(unknown)"}</div>
       </div>
+      <span class="int-check">✓</span>
     </div>`;
   }).join("");
+}
+
+function toggleDefaultAcc(intId) {
+  if (S.defaultAccounts.has(intId)) {
+    S.defaultAccounts.delete(intId);
+  } else {
+    S.defaultAccounts.add(intId);
+  }
+  const chip = document.getElementById(`intchip-${intId}`);
+  if (chip) chip.classList.toggle("active", S.defaultAccounts.has(intId));
+  const count = S.defaultAccounts.size;
+  toast(`${count} channel${count !== 1 ? "s" : ""} selected for new posts`, count ? "ok" : "");
+}
+
+function selectAllChannels() {
+  S.integrations.forEach(i => {
+    S.defaultAccounts.add(i.id);
+    document.getElementById(`intchip-${i.id}`)?.classList.add("active");
+  });
+  toast(`All ${S.integrations.length} channels selected`, "ok");
+}
+
+function selectNoneChannels() {
+  S.defaultAccounts.clear();
+  S.integrations.forEach(i => {
+    document.getElementById(`intchip-${i.id}`)?.classList.remove("active");
+  });
+  toast("All channels deselected — new posts won't target any channel until you pick one", "");
 }
 
 function platform(i) {
@@ -750,14 +815,15 @@ function handleVideoFolderBrowse(input) {
   // Sort by full relative path so sibling folders come out grouped and ordered
   ok.sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath, undefined, { numeric: true }));
 
-  ok.forEach(f => {
+  const startStep = S.posts.filter(p => p.status === "pending").length;
+  ok.forEach((f, idx) => {
     S.posts.push({
       id:       `p${Date.now()}${Math.random().toString(36).slice(2)}`,
       file:     f,
       url:      URL.createObjectURL(f),
       caption:  "",
-      accounts: S.integrations.map(i => i.id),
-      when:     defaultDT(),
+      accounts: [...S.defaultAccounts],
+      when:     staggeredDT(startStep + idx),
       status:   "pending",
       err:      null
     });
@@ -932,7 +998,7 @@ function showSkippedPanel(list) {
 }
 
 // ── Build a post object from real File objects ───────────────────────────────
-function makePostFromFiles(folderName, slideFiles, metadata, hourOffset) {
+function makePostFromFiles(folderName, slideFiles, metadata, stepIndex) {
   const captionParts = [];
   if (metadata?.hook_caption)    captionParts.push(metadata.hook_caption);
   if (metadata?.recipes?.length) captionParts.push(metadata.recipes.map(r => r.title).join("\n"));
@@ -940,8 +1006,7 @@ function makePostFromFiles(folderName, slideFiles, metadata, hourOffset) {
     captionParts.push(Array.isArray(metadata.cta_caption)
       ? metadata.cta_caption.join("\n") : metadata.cta_caption);
   }
-  const when = new Date();
-  when.setHours(when.getHours() + 1 + hourOffset, 0, 0, 0);
+  const when = staggeredDT(stepIndex);
   return {
     id:         `p${Date.now()}${Math.random().toString(36).slice(2)}`,
     slideshow:  true,
@@ -951,8 +1016,8 @@ function makePostFromFiles(folderName, slideFiles, metadata, hourOffset) {
     urls:       slideFiles.map(f => URL.createObjectURL(f)),
     caption:    captionParts.join("\n\n").trim(),
     postTitle:  (metadata?.theme || "").slice(0, 100),
-    accounts:   S.integrations.map(i => i.id),
-    when:       when.toISOString().slice(0, 16),
+    accounts:   [...S.defaultAccounts],
+    when,
     status:     "pending",
     err:        null
   };
@@ -1022,7 +1087,7 @@ async function loadSlideshowFromFolder() {
 }
 
 // Helper: build a post object from server-returned disk paths
-function buildSlideshowPostFromPaths(folderName, basePath, slides, metadata, hourOffset) {
+function buildSlideshowPostFromPaths(folderName, basePath, slides, metadata, stepIndex) {
   const captionParts = [];
   if (metadata?.hook_caption)    captionParts.push(metadata.hook_caption);
   if (metadata?.recipes?.length) captionParts.push(metadata.recipes.map(r => r.title).join("\n"));
@@ -1030,9 +1095,6 @@ function buildSlideshowPostFromPaths(folderName, basePath, slides, metadata, hou
     captionParts.push(Array.isArray(metadata.cta_caption)
       ? metadata.cta_caption.join("\n") : metadata.cta_caption);
   }
-
-  const when = new Date();
-  when.setHours(when.getHours() + 1 + hourOffset, 0, 0, 0);
 
   return {
     id:         `p${Date.now()}${Math.random().toString(36).slice(2)}`,
@@ -1043,8 +1105,8 @@ function buildSlideshowPostFromPaths(folderName, basePath, slides, metadata, hou
     urls:       slides.map(s => `/api/file?path=${encodeURIComponent(s.path)}`),
     caption:    captionParts.join("\n\n").trim(),
     postTitle:  (metadata?.theme || "").slice(0, 100),
-    accounts:   S.integrations.map(i => i.id),
-    when:       when.toISOString().slice(0, 16),
+    accounts:   [...S.defaultAccounts],
+    when:       staggeredDT(stepIndex),
     status:     "pending",
     err:        null
   };
@@ -1054,14 +1116,15 @@ function addFiles(files) {
   const valid = files.filter(f => f.type.startsWith("video/") || f.type.startsWith("image/"));
   if (!valid.length) { toast("No valid video or image files", "fail"); return; }
 
-  valid.forEach(f => {
+  const startStep = S.posts.filter(p => p.status === "pending").length;
+  valid.forEach((f, idx) => {
     S.posts.push({
       id:       `p${Date.now()}${Math.random().toString(36).slice(2)}`,
       file:     f,
       url:      URL.createObjectURL(f),
       caption:  "",
-      accounts: S.integrations.map(i => i.id),
-      when:     defaultDT(),
+      accounts: [...S.defaultAccounts],
+      when:     staggeredDT(startStep + idx),
       status:   "pending",
       err:      null
     });
@@ -1071,11 +1134,22 @@ function addFiles(files) {
   toast(`Added ${valid.length} file(s) to queue`, "ok");
 }
 
-function defaultDT() {
-  const d = new Date();
-  d.setHours(d.getHours() + 1, 0, 0, 0);
-  return d.toISOString().slice(0, 16);
+// Format a Date as a local-time string for datetime-local inputs.
+// toISOString() gives UTC which datetime-local misinterprets in non-UTC timezones.
+function localDTStr(d) {
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+// First post: now + 15 min. Each subsequent: +90 min per step.
+function staggeredDT(stepIndex = 0) {
+  const d = new Date();
+  d.setSeconds(0, 0);
+  d.setMinutes(d.getMinutes() + 15 + stepIndex * 90);
+  return localDTStr(d);
+}
+
+function defaultDT() { return staggeredDT(0); }
 
 // ────────────────────────── Render queue ───────────────────────────────────
 function renderQueue() {
@@ -1165,7 +1239,7 @@ function cardHTML(p) {
     <div>
       <div class="field-label">Schedule Date &amp; Time</div>
       <input class="dt-input" type="datetime-local" id="dt-${p.id}"
-             value="${p.when}" min="${new Date().toISOString().slice(0,16)}">
+             value="${p.when}" min="${localDTStr(new Date())}">
       <div class="field-label" style="margin-top:14px">Post To</div>
       <div class="acc-grid">${accChipsHTML(p)}</div>
     </div>
@@ -1207,7 +1281,7 @@ function cardHTML(p) {
     <div>
       <div class="field-label">Schedule Date &amp; Time</div>
       <input class="dt-input" type="datetime-local" id="dt-${p.id}"
-             value="${p.when}" min="${new Date().toISOString().slice(0,16)}">
+             value="${p.when}" min="${localDTStr(new Date())}">
       <div class="field-label" style="margin-top:14px">Post To</div>
       <div class="acc-grid">${accChipsHTML(p)}</div>
     </div>
@@ -1540,17 +1614,20 @@ function extractVideoFrame(videoUrl) {
 }
 
 // Expose for inline onclick / global use
-window.connect                   = connect;
-window.saveAnthropicKey          = saveAnthropicKey;
-window.generateCaption           = generateCaption;
-window.loadIntegrations          = loadIntegrations;
-window.loadSlideshowFromFolder   = loadSlideshowFromFolder;
-window.handleVideoFolderBrowse   = handleVideoFolderBrowse;
-window.handleFolderBrowse        = handleFolderBrowse;
-window.makePostFromFiles         = makePostFromFiles;
+window.connect                     = connect;
+window.saveAnthropicKey            = saveAnthropicKey;
+window.generateCaption             = generateCaption;
+window.loadIntegrations            = loadIntegrations;
+window.loadSlideshowFromFolder     = loadSlideshowFromFolder;
+window.handleVideoFolderBrowse     = handleVideoFolderBrowse;
+window.handleFolderBrowse          = handleFolderBrowse;
+window.makePostFromFiles           = makePostFromFiles;
 window.buildSlideshowPostFromPaths = buildSlideshowPostFromPaths;
-window.scheduleAll             = scheduleAll;
-window.clearQueue              = clearQueue;
+window.scheduleAll                 = scheduleAll;
+window.clearQueue                  = clearQueue;
+window.toggleDefaultAcc            = toggleDefaultAcc;
+window.selectAllChannels           = selectAllChannels;
+window.selectNoneChannels          = selectNoneChannels;
 </script>
 </body>
 </html>"""
