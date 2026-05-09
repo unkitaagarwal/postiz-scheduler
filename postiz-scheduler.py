@@ -9,12 +9,16 @@ No third-party packages required — uses only Python's standard library.
 """
 
 import json
+import os
+import mimetypes
+import uuid
 import urllib.request
 import urllib.error
 import webbrowser
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs, unquote
 
 POSTIZ_API = "https://api.postiz.com/public/v1"
 PORT = 8080
@@ -115,8 +119,9 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
 /* ── Drop zone ── */
 .drop-zone {
   border: 2px dashed var(--border); border-radius: 12px;
-  padding: 52px 20px; text-align: center; cursor: pointer;
+  padding: 36px 20px 28px; text-align: center; cursor: pointer;
   background: var(--card2); transition: border-color .2s, background .2s;
+  display: flex; flex-direction: column; align-items: center;
 }
 .drop-zone:hover, .drop-zone.drag-over {
   border-color: var(--accent); background: rgba(124,106,247,.07);
@@ -124,6 +129,58 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
 .dz-icon { font-size: 44px; display: block; margin-bottom: 14px; }
 .drop-zone strong { font-size: 16px; }
 .drop-zone p { color: var(--muted); font-size: 13px; margin-top: 6px; }
+.dz-browse-btn {
+  margin-top: 16px; display: inline-flex; align-items: center; gap: 6px;
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600;
+  color: var(--text); cursor: pointer; transition: background .15s, border-color .15s;
+  font-family: inherit;
+}
+.dz-browse-btn:hover { background: var(--card2); border-color: var(--accent); color: var(--accent); }
+
+/* ── Folder loader zone ── */
+.folder-zone {
+  border: 2px dashed #7c6af755; border-radius: 12px;
+  padding: 28px 20px; background: var(--card2);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.folder-zone-title { font-size: 16px; font-weight: 700; }
+.folder-zone-sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.folder-browse-big {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: 16px 10px 10px;
+}
+.folder-browse-icon { font-size: 36px; }
+.folder-browse-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--accent); color: #fff; border: none;
+  border-radius: 9px; padding: 10px 20px; font-size: 14px; font-weight: 600;
+  cursor: pointer; transition: background .15s; font-family: inherit;
+}
+.folder-browse-btn:hover { background: var(--accentH); }
+.folder-browse-btn:disabled { opacity: .45; cursor: not-allowed; }
+.folder-or-row {
+  display: flex; align-items: center; gap: 10px;
+  color: var(--muted); font-size: 12px;
+}
+.folder-or-row::before, .folder-or-row::after {
+  content: ""; flex: 1; height: 1px; background: var(--border);
+}
+.folder-input-row { display: flex; gap: 10px; }
+.folder-path-input {
+  flex: 1; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 9px; color: var(--text); font-size: 13px;
+  padding: 10px 14px; outline: none; font-family: monospace;
+  transition: border-color .2s;
+}
+.folder-path-input:focus { border-color: var(--accent); }
+.folder-hint {
+  font-size: 11px; color: var(--muted); line-height: 1.6;
+}
+.folder-hint code {
+  background: var(--bg); border-radius: 4px; padding: 1px 5px;
+  font-family: monospace; color: var(--accent);
+}
 
 /* ── Queue header ── */
 .queue-header {
@@ -265,6 +322,39 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
   font-size: 12px; color: var(--muted); flex-shrink: 0;
 }
 
+/* ── Skipped folders panel ── */
+.skipped-panel {
+  background: var(--card); border: 1px solid var(--error);
+  border-radius: 13px; padding: 18px; margin-top: 14px;
+}
+.skipped-panel-title {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 12px;
+}
+.skipped-panel-title strong { color: var(--error); font-size: 14px; }
+.skipped-table {
+  width: 100%; border-collapse: collapse; font-size: 13px;
+}
+.skipped-table th {
+  text-align: left; color: var(--muted); font-size: 10px;
+  font-weight: 700; text-transform: uppercase; letter-spacing: .8px;
+  padding: 0 8px 8px 0; border-bottom: 1px solid var(--border);
+}
+.skipped-table td {
+  padding: 7px 8px 7px 0; border-bottom: 1px solid rgba(42,47,71,.5);
+  vertical-align: middle;
+}
+.skipped-table tr:last-child td { border-bottom: none; }
+.skipped-count-badge {
+  display: inline-block; background: rgba(240,106,138,.15);
+  color: var(--error); border-radius: 5px;
+  padding: 2px 7px; font-size: 12px; font-weight: 700;
+}
+.skipped-name {
+  font-family: monospace; font-size: 12px; color: var(--text);
+  word-break: break-all;
+}
+
 /* ── Utility ── */
 .hidden { display: none !important; }
 .row { display: flex; align-items: center; gap: 10px; }
@@ -318,26 +408,51 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
 
       <!-- Individual videos/images -->
-      <div class="drop-zone" id="dropZone"
-           onclick="document.getElementById('fileInput').click()">
+      <div class="drop-zone" id="dropZone">
         <span class="dz-icon">🎬</span>
         <strong>Videos &amp; Images</strong>
-        <p>One post per file</p>
-        <p style="margin-top:8px;font-size:11px;color:var(--muted)">MP4 · MOV · JPG · PNG</p>
+        <p>Drag &amp; drop files here</p>
+        <p style="font-size:11px;color:var(--muted);margin-top:2px">MP4 · MOV · JPG · PNG</p>
+        <div style="display:flex;gap:8px;margin-top:16px">
+          <button class="dz-browse-btn" style="margin-top:0"
+                  onclick="event.stopPropagation();document.getElementById('fileInput').click()">
+            📄 Browse Files
+          </button>
+          <button class="dz-browse-btn" style="margin-top:0"
+                  onclick="event.stopPropagation();document.getElementById('videoFolderInput').click()">
+            📂 Browse Folder
+          </button>
+        </div>
       </div>
 
-      <!-- Slideshow / carousel -->
-      <div class="drop-zone" id="slideshowZone"
-           onclick="document.getElementById('slideshowInput').click()"
-           style="border-color: #7c6af755;">
-        <span class="dz-icon">🖼️</span>
-        <strong>Slideshow / Carousel</strong>
-        <p>Select multiple images → one post</p>
-        <p style="margin-top:8px;font-size:11px;color:var(--muted)">JPG · PNG · GIF</p>
+      <!-- Slideshow / carousel via folder picker -->
+      <div class="folder-zone">
+        <div>
+          <div class="folder-zone-title">🖼️ Slideshow / Carousel</div>
+          <div class="folder-zone-sub">Select a folder — one post with all slides</div>
+        </div>
+        <div class="folder-browse-big">
+          <span class="folder-browse-icon">📂</span>
+          <button class="folder-browse-btn" id="folderBrowseBtn"
+                  onclick="document.getElementById('folderBrowseInput').click()">
+            Choose Folder
+          </button>
+          <span style="font-size:12px;color:var(--muted)">
+            Folder needs a <code style="background:var(--bg);padding:1px 5px;border-radius:4px;color:var(--accent);font-family:monospace">slides/</code> subfolder &amp; <code style="background:var(--bg);padding:1px 5px;border-radius:4px;color:var(--accent);font-family:monospace">.json</code> file
+          </span>
+        </div>
+        <div class="folder-or-row">or paste path manually</div>
+        <div class="folder-input-row">
+          <input class="folder-path-input" id="folderInput"
+                 placeholder="/Users/you/carousels/my_slideshow">
+          <button class="btn btn-sm" id="loadFolderBtn" onclick="loadSlideshowFromFolder()"
+                  style="padding:8px 14px;font-size:12px">Load</button>
+        </div>
       </div>
     </div>
-    <input type="file" id="fileInput"      multiple accept="video/*,image/*" style="display:none">
-    <input type="file" id="slideshowInput" multiple accept="image/*"         style="display:none">
+    <input type="file" id="fileInput"         multiple accept="video/*,image/*" style="display:none">
+    <input type="file" id="videoFolderInput" webkitdirectory style="display:none">
+    <input type="file" id="folderBrowseInput" webkitdirectory style="display:none">
   </div>
 
   <!-- ── Post Queue ── -->
@@ -378,7 +493,7 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
 const S = {
   apiKey:       localStorage.getItem("postiz_key") || "",
   integrations: [],
-  posts:        [],   // see addFiles() for shape
+  posts:        [],   // see addFiles() / loadSlideshowFromFolder() for shape
   busy:         false
 };
 
@@ -483,8 +598,6 @@ function platform(i) {
 }
 
 // Detect whether a video has an audio track using the browser media API.
-// Returns true = has audio, false = silent/no audio track.
-// Falls back to true (assume audio) when the API is unavailable (e.g. Firefox).
 async function videoHasAudio(objectUrl) {
   return new Promise(resolve => {
     const v = document.createElement("video");
@@ -492,24 +605,20 @@ async function videoHasAudio(objectUrl) {
     v.src = objectUrl;
     const finish = r => { v.src = ""; resolve(r); };
     v.onloadedmetadata = () => {
-      if (v.audioTracks) finish(v.audioTracks.length > 0); // Chrome/Edge
-      else               finish(true);  // can't tell → assume audio present
+      if (v.audioTracks) finish(v.audioTracks.length > 0);
+      else               finish(true);
     };
     v.onerror = () => finish(false);
-    setTimeout(() => finish(true), 4000); // safety fallback
+    setTimeout(() => finish(true), 4000);
   });
 }
 
 // Build platform-specific settings.
-// needsMusic = true when the file is an image/slideshow OR a silent video —
-// in those cases TikTok should add background music automatically.
 function buildSettings(intId, title, needsMusic = false) {
   const int  = S.integrations.find(i => i.id === intId);
   const pl   = int ? platform(int) : "";
   const base = { title: (title || "").slice(0, 100) };
 
-  // Use includes() so partial identifiers like "instagram-reel",
-  // "instagram-business", "tiktok-business", etc. all match correctly.
   console.log(`[buildSettings] intId=${intId} platform="${pl}"`);
 
   let extra = {};
@@ -518,11 +627,11 @@ function buildSettings(intId, title, needsMusic = false) {
     extra = {
       privacy_level:        "PUBLIC_TO_EVERYONE",
       duet:                 false,
-      stitch:                 false,
-      comment:                true,
-      autoAddMusic:           needsMusic ? "yes" : "no",
-      brand_content_toggle:   false,
-      brand_organic_toggle:   false,
+      stitch:               false,
+      comment:              true,
+      autoAddMusic:         needsMusic ? "yes" : "no",
+      brand_content_toggle: false,
+      brand_organic_toggle: false,
       content_posting_method: "DIRECT_POST"
     };
   } else if (pl.includes("youtube")) {
@@ -534,14 +643,13 @@ function buildSettings(intId, title, needsMusic = false) {
   } else if (pl.includes("facebook")) {
     extra = {};
   }
-  // twitter / threads / bluesky / pinterest → base title only
 
   return { ...base, ...extra };
 }
 
 // ────────────────────────── Drop zone ──────────────────────────────────────
 function initDrop() {
-  // ── Regular files (one post per file) ──
+  // ── Video/image drop zone ──
   const zone = document.getElementById("dropZone");
   const inp  = document.getElementById("fileInput");
   zone.addEventListener("dragover",  e => { e.preventDefault(); zone.classList.add("drag-over"); });
@@ -550,43 +658,356 @@ function initDrop() {
     e.preventDefault(); zone.classList.remove("drag-over");
     addFiles([...e.dataTransfer.files]);
   });
+  // Click the whole zone (but not child buttons — they call directly)
+  zone.addEventListener("click", e => {
+    if (e.target === zone || e.target.tagName === "SPAN" || e.target.tagName === "STRONG" || e.target.tagName === "P") {
+      document.getElementById("fileInput").click();
+    }
+  });
   inp.addEventListener("change", () => { addFiles([...inp.files]); inp.value = ""; });
 
-  // ── Slideshow zone (all selected images → one carousel post) ──
-  const szOne  = document.getElementById("slideshowZone");
-  const szInp  = document.getElementById("slideshowInput");
-  szOne.addEventListener("dragover",  e => { e.preventDefault(); szOne.classList.add("drag-over"); });
-  szOne.addEventListener("dragleave", ()=> szOne.classList.remove("drag-over"));
-  szOne.addEventListener("drop", e => {
-    e.preventDefault(); szOne.classList.remove("drag-over");
-    addSlideshow([...e.dataTransfer.files]);
+  // ── Video folder browser (webkitdirectory) ──
+  const videoFolderInput = document.getElementById("videoFolderInput");
+  videoFolderInput.addEventListener("change", () => {
+    handleVideoFolderBrowse(videoFolderInput);
   });
-  szInp.addEventListener("change", () => { addSlideshow([...szInp.files]); szInp.value = ""; });
+
+  // ── Slideshow folder browser (webkitdirectory) ──
+  const folderBrowseInput = document.getElementById("folderBrowseInput");
+  folderBrowseInput.addEventListener("change", () => {
+    handleFolderBrowse(folderBrowseInput);
+  });
+
+  // Allow pressing Enter in the manual path input
+  document.getElementById("folderInput")?.addEventListener("keydown", e => {
+    if (e.key === "Enter") loadSlideshowFromFolder();
+  });
 }
 
-// ────────────────────────── Add slideshow (carousel) ───────────────────────
-function addSlideshow(files) {
-  const images = files.filter(f => f.type.startsWith("image/"));
-  if (!images.length) { toast("Select image files for a slideshow", "fail"); return; }
-  if (images.length < 2) { toast("Pick at least 2 images for a slideshow", "fail"); return; }
+// ────────────────────────── Handle video folder browse ──────────────────────
+function handleVideoFolderBrowse(input) {
+  const allFiles = [...input.files];
+  input.value = "";
+  if (!allFiles.length) return;
 
-  // Sort by filename so numbered slides (01_, 02_, …) stay in order
-  images.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const folderName = allFiles[0].webkitRelativePath.split("/")[0];
 
-  S.posts.push({
-    id:         `p${Date.now()}${Math.random().toString(36).slice(2)}`,
-    slideshow:  true,                          // ← marks this as a carousel post
-    files:      images,
-    urls:       images.map(f => URL.createObjectURL(f)),
-    caption:    "",
-    accounts:   S.integrations.map(i => i.id),
-    when:       defaultDT(),
-    status:     "pending",
-    err:        null
+  // Accept any video or image file anywhere inside the folder (recursive)
+  const valid = allFiles.filter(f =>
+    f.type.startsWith("video/") || f.type.startsWith("image/")
+  );
+
+  // Reject oversized files early
+  const MAX_MB = 100;
+  const tooBig  = valid.filter(f => f.size > MAX_MB * 1024 * 1024);
+  const ok      = valid.filter(f => f.size <= MAX_MB * 1024 * 1024);
+
+  if (!ok.length) {
+    toast(`No valid video/image files found in "${folderName}"`, "fail");
+    return;
+  }
+
+  // Sort by full relative path so sibling folders come out grouped and ordered
+  ok.sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath, undefined, { numeric: true }));
+
+  ok.forEach(f => {
+    S.posts.push({
+      id:       `p${Date.now()}${Math.random().toString(36).slice(2)}`,
+      file:     f,
+      url:      URL.createObjectURL(f),
+      caption:  "",
+      accounts: S.integrations.map(i => i.id),
+      when:     defaultDT(),
+      status:   "pending",
+      err:      null
+    });
   });
 
   renderQueue();
-  toast(`Added slideshow with ${images.length} slides`, "ok");
+  toast(`Added ${ok.length} file(s) from "${folderName}"`, "ok");
+
+  if (tooBig.length) {
+    toast(`Skipped ${tooBig.length} file(s) over ${MAX_MB} MB`, "fail");
+  }
+}
+
+// ────────────────────────── Handle folder browse (webkitdirectory) ─────────
+async function handleFolderBrowse(input) {
+  const allFiles = [...input.files];
+  input.value = "";
+  if (!allFiles.length) return;
+
+  const btn = document.getElementById("folderBrowseBtn");
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spin"></span> Reading…`;
+
+  try {
+    const IMAGE_RE = /\.(jpg|jpeg|png|gif|webp|avif)$/i;
+    const rootName = allFiles[0].webkitRelativePath.split("/")[0];
+
+    // ── Detect mode using actual path depths ─────────────────────────────────
+    // Single:  root/slides/img.png           → parts[1]=="slides", length==3
+    // Parent:  root/subfolder/slides/img.png → parts[2]=="slides", length==4
+    const isSingle = allFiles.some(f => {
+      const p = f.webkitRelativePath.split("/");
+      return p.length === 3 && p[1].toLowerCase() === "slides" && IMAGE_RE.test(f.name);
+    });
+
+    if (isSingle) {
+      // ── Single slideshow folder ──────────────────────────────────────────
+      // JSON: root/name.json  (length 2)
+      const jsonFile = allFiles.find(f => {
+        const p = f.webkitRelativePath.split("/");
+        return p.length === 2 && f.name.toLowerCase().endsWith(".json");
+      });
+      // Slides: root/slides/img.png  (length 3, parts[1]=="slides")
+      let slides = allFiles.filter(f => {
+        const p = f.webkitRelativePath.split("/");
+        return p.length === 3 && p[1].toLowerCase() === "slides" && IMAGE_RE.test(f.name);
+      });
+      slides.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+      if (slides.length < 2) {
+        toast(`Only ${slides.length} slide(s) found — need at least 2`, "fail"); return;
+      }
+      let meta = {};
+      if (jsonFile) { try { meta = JSON.parse(await jsonFile.text()); } catch(e) {} }
+
+      S.posts.push(makePostFromFiles(rootName, slides, meta, 0));
+      renderQueue();
+      toast(`Loaded "${rootName}": ${slides.length} slides`, "ok");
+
+    } else {
+      // ── Parent folder: extract per-subfolder directly from allFiles ──────
+      // Group by the subfolder name (parts[1]), keeping ALL files regardless
+      // of depth so we never accidentally exclude anything.
+      const groups = {};
+      for (const f of allFiles) {
+        const p = f.webkitRelativePath.split("/");
+        // p[0] = root (output_compilations), p[1] = subfolder name
+        if (p.length >= 3) {
+          const sub = p[1];
+          (groups[sub] = groups[sub] || []).push(f);
+        }
+      }
+
+      const subNames = Object.keys(groups).sort();
+      if (!subNames.length) {
+        toast("No subfolders found inside the selected folder", "fail");
+        return;
+      }
+
+      console.log(`[folder] root="${rootName}" subfolders:`, subNames);
+
+      let added = 0;
+      const skippedList = [];  // [{name, count}, …]
+      for (const subName of subNames) {
+        const subFiles = groups[subName];
+
+        // JSON: root/subName/file.json — any depth under subName, just find the .json
+        const jsonFile = subFiles.find(f => {
+          const p = f.webkitRelativePath.split("/");
+          // Direct child: root/subName/name.json  → length 3
+          return p.length === 3 && f.name.toLowerCase().endsWith(".json");
+        });
+
+        // Slides: root/subName/slides/img.* — look for ANY image file whose
+        // grandparent folder is "slides" (p[2]=="slides"), regardless of exact depth
+        let slides = subFiles.filter(f => {
+          const p = f.webkitRelativePath.split("/");
+          // p[0]=root  p[1]=subName  p[2]="slides"  p[3]=filename
+          return p.length >= 4 && p[2].toLowerCase() === "slides" && IMAGE_RE.test(f.name);
+        });
+        slides.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+        console.log(`[folder]   ${subName}: ${slides.length} slides, json=${!!jsonFile}`);
+
+        if (slides.length < 2) {
+          skippedList.push({ name: subName, count: slides.length });
+          continue;
+        }
+
+        let meta = {};
+        if (jsonFile) { try { meta = JSON.parse(await jsonFile.text()); } catch(e) { console.warn(e); } }
+
+        S.posts.push(makePostFromFiles(subName, slides, meta, added));
+        added++;
+      }
+
+      renderQueue();
+      if (added) toast(`Queued ${added} slideshow(s) from "${rootName}"`, "ok");
+
+      if (skippedList.length) {
+        // Show a persistent panel listing every skipped folder with its slide count
+        showSkippedPanel(skippedList);
+      }
+    }
+
+  } catch (e) {
+    toast("Failed to read folder: " + e.message, "fail");
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = "Choose Folder";
+}
+
+// ── Show a panel listing every folder that was skipped (< 2 slides) ──────────
+function showSkippedPanel(list) {
+  // Remove any previous skipped panel
+  document.getElementById("skippedPanel")?.remove();
+
+  const rows = list.map(({ name, count }) => `
+    <tr>
+      <td><span class="skipped-name">${esc(name)}</span></td>
+      <td><span class="skipped-count-badge">${count} slide${count === 1 ? "" : "s"}</span></td>
+      <td style="color:var(--muted);font-size:12px">
+        ${count === 0 ? "No slides/ folder found" : "Below minimum (need ≥ 2)"}
+      </td>
+    </tr>`).join("");
+
+  const panel = document.createElement("div");
+  panel.id = "skippedPanel";
+  panel.className = "skipped-panel";
+  panel.innerHTML = `
+    <div class="skipped-panel-title">
+      <strong>⚠ ${list.length} folder${list.length > 1 ? "s" : ""} not queued — insufficient slides</strong>
+      <button class="btn btn-outline btn-sm" onclick="document.getElementById('skippedPanel').remove()"
+              style="padding:4px 10px;font-size:11px">Dismiss</button>
+    </div>
+    <table class="skipped-table">
+      <thead>
+        <tr>
+          <th style="width:55%">Folder</th>
+          <th>Slides found</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  // Insert after the drop card
+  const dropCard = document.getElementById("dropCard");
+  dropCard.insertAdjacentElement("afterend", panel);
+  panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// ── Build a post object from real File objects ───────────────────────────────
+function makePostFromFiles(folderName, slideFiles, metadata, hourOffset) {
+  const captionParts = [];
+  if (metadata?.hook_caption)    captionParts.push(metadata.hook_caption);
+  if (metadata?.recipes?.length) captionParts.push(metadata.recipes.map(r => r.title).join("\n"));
+  if (metadata?.cta_caption?.length) {
+    captionParts.push(Array.isArray(metadata.cta_caption)
+      ? metadata.cta_caption.join("\n") : metadata.cta_caption);
+  }
+  const when = new Date();
+  when.setHours(when.getHours() + 1 + hourOffset, 0, 0, 0);
+  return {
+    id:         `p${Date.now()}${Math.random().toString(36).slice(2)}`,
+    slideshow:  true,
+    fromFolder: false,
+    folderPath: folderName,
+    files:      slideFiles,
+    urls:       slideFiles.map(f => URL.createObjectURL(f)),
+    caption:    captionParts.join("\n\n").trim(),
+    postTitle:  (metadata?.theme || "").slice(0, 100),
+    accounts:   S.integrations.map(i => i.id),
+    when:       when.toISOString().slice(0, 16),
+    status:     "pending",
+    err:        null
+  };
+}
+
+// ────────────────────────── Load slideshow from folder (manual path) ────────
+async function loadSlideshowFromFolder() {
+  const folderPath = document.getElementById("folderInput").value.trim();
+  if (!folderPath) { toast("Enter a folder path first", "fail"); return; }
+
+  const btn = document.getElementById("loadFolderBtn");
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spin"></span>`;
+
+  try {
+    const res = await fetch(`/api/folder?path=${encodeURIComponent(folderPath)}`, {
+      headers: { Authorization: S.apiKey }
+    });
+    if (!res.ok) {
+      const t = await res.text().catch(() => res.statusText);
+      throw new Error(t.slice(0, 200));
+    }
+    const data = await res.json();
+
+    if (data.mode === "multi") {
+      // ── Parent folder: multiple slideshows ──────────────────────────────
+      const { slideshows, skipped: serverSkipped } = data;
+      if (!slideshows?.length && !serverSkipped?.length)
+        throw new Error("No slideshow subfolders found");
+
+      let added = 0;
+      for (const sw of slideshows || []) {
+        const post = buildSlideshowPostFromPaths(
+          sw.folderName, folderPath + "/" + sw.folderName, sw.slides, sw.metadata, added
+        );
+        S.posts.push(post);
+        added++;
+      }
+      renderQueue();
+      if (added) toast(`Queued ${added} slideshow(s) from folder`, "ok");
+
+      // Show skipped panel if any subfolders didn't meet the criteria
+      const skippedList = (serverSkipped || []).map(s => ({ name: s.folderName, count: s.slideCount }));
+      if (skippedList.length) showSkippedPanel(skippedList);
+
+    } else {
+      // ── Single slideshow folder ──────────────────────────────────────────
+      const { slides, metadata } = data;
+      const folderName = folderPath.split("/").pop();
+      if (!slides || slides.length < 2) {
+        showSkippedPanel([{ name: folderName, count: slides?.length || 0 }]);
+        throw new Error(`"${folderName}" has ${slides?.length || 0} slide(s) — need at least 2`);
+      }
+      S.posts.push(buildSlideshowPostFromPaths(folderName, folderPath, slides, metadata, 0));
+      renderQueue();
+      toast(`Loaded slideshow: ${slides.length} slides`, "ok");
+    }
+
+    document.getElementById("folderInput").value = "";
+
+  } catch (e) {
+    toast("Failed to load folder: " + e.message, "fail");
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = "Load";
+}
+
+// Helper: build a post object from server-returned disk paths
+function buildSlideshowPostFromPaths(folderName, basePath, slides, metadata, hourOffset) {
+  const captionParts = [];
+  if (metadata?.hook_caption)    captionParts.push(metadata.hook_caption);
+  if (metadata?.recipes?.length) captionParts.push(metadata.recipes.map(r => r.title).join("\n"));
+  if (metadata?.cta_caption?.length) {
+    captionParts.push(Array.isArray(metadata.cta_caption)
+      ? metadata.cta_caption.join("\n") : metadata.cta_caption);
+  }
+
+  const when = new Date();
+  when.setHours(when.getHours() + 1 + hourOffset, 0, 0, 0);
+
+  return {
+    id:         `p${Date.now()}${Math.random().toString(36).slice(2)}`,
+    slideshow:  true,
+    fromFolder: true,
+    folderPath: folderName,
+    files:      slides,
+    urls:       slides.map(s => `/api/file?path=${encodeURIComponent(s.path)}`),
+    caption:    captionParts.join("\n\n").trim(),
+    postTitle:  (metadata?.theme || "").slice(0, 100),
+    accounts:   S.integrations.map(i => i.id),
+    when:       when.toISOString().slice(0, 16),
+    status:     "pending",
+    err:        null
+  };
 }
 
 function addFiles(files) {
@@ -599,9 +1020,9 @@ function addFiles(files) {
       file:     f,
       url:      URL.createObjectURL(f),
       caption:  "",
-      accounts: S.integrations.map(i => i.id),   // all selected by default
+      accounts: S.integrations.map(i => i.id),
       when:     defaultDT(),
-      status:   "pending",  // pending|uploading|scheduling|done|error
+      status:   "pending",
       err:      null
     });
   });
@@ -627,15 +1048,10 @@ function renderQueue() {
 
   list.innerHTML = S.posts.map(p => cardHTML(p)).join("");
 
-  // Wire events
   S.posts.forEach(p => {
-    // Caption
     byId(`cap-${p.id}`)?.addEventListener("input", e => { p.caption = e.target.value; });
-    // Datetime
     byId(`dt-${p.id}`)?.addEventListener("change", e => { p.when = e.target.value; });
-    // Remove button
     byId(`rm-${p.id}`)?.addEventListener("click", () => removePost(p.id));
-    // Account chips
     S.integrations.forEach(i => {
       byId(`chip-${p.id}-${i.id}`)?.addEventListener("click", () => toggleAcc(p, i.id));
     });
@@ -672,21 +1088,24 @@ function cardHTML(p) {
 
   // ── Slideshow card ───────────────────────────────────────────────────────
   if (p.slideshow) {
-    const MAX_PREVIEW = 6;
+    const MAX_PREVIEW = 8;
     const thumbs = p.urls.slice(0, MAX_PREVIEW).map((u, i) =>
       `<img class="slide-thumb" src="${u}" title="${esc(p.files[i].name)}">`
     ).join("");
     const extra = p.urls.length > MAX_PREVIEW
       ? `<div class="slide-count">+${p.urls.length - MAX_PREVIEW}</div>` : "";
-    const totalSize = p.files.reduce((s, f) => s + f.size, 0);
+    const totalSize = p.files.reduce((s, f) => s + (f.size || 0), 0);
+    const subline   = p.fromFolder
+      ? `📂 ${esc(p.folderPath)}`
+      : `🖼️ ${fmtBytes(totalSize)} total · sorted by filename`;
 
     return `
 <div class="post-card ${stClass}" id="pc-${p.id}">
   <div class="card-top">
     <div class="thumb" style="font-size:22px">🖼️×${p.files.length}</div>
     <div class="post-info">
-      <div class="post-fname">Slideshow — ${p.files.length} slides</div>
-      <div class="post-fsize">🖼️ ${fmtBytes(totalSize)} total · sorted by filename</div>
+      <div class="post-fname">Slideshow — ${p.files.length} slides${p.postTitle ? ` · ${esc(p.postTitle)}` : ""}</div>
+      <div class="post-fsize">${subline}</div>
       <div class="post-status-row" id="sr-${p.id}">${badgeHTML(p)}</div>
       ${p.err ? `<div style="font-size:12px;color:var(--error);margin-top:4px">⚠ ${esc(p.err)}</div>` : ""}
     </div>
@@ -697,7 +1116,8 @@ function cardHTML(p) {
   <div class="card-body" style="margin-top:14px">
     <div>
       <div class="field-label">Caption</div>
-      <textarea class="caption-ta" id="cap-${p.id}" placeholder="Write your caption…">${esc(p.caption)}</textarea>
+      <textarea class="caption-ta" id="cap-${p.id}" style="min-height:120px"
+        placeholder="Write your caption…">${esc(p.caption)}</textarea>
     </div>
     <div>
       <div class="field-label">Schedule Date &amp; Time</div>
@@ -765,7 +1185,7 @@ function badgeHTML(p) {
 // ────────────────────────── Queue actions ──────────────────────────────────
 function removePost(id) {
   const p = S.posts.find(x => x.id === id);
-  if (p) {
+  if (p && !p.fromFolder) {
     if (p.slideshow) p.urls?.forEach(u => URL.revokeObjectURL(u));
     else if (p.url)  URL.revokeObjectURL(p.url);
   }
@@ -777,8 +1197,10 @@ function clearQueue() {
   if (S.busy) { toast("Wait for current batch to finish", "fail"); return; }
   if (!confirm("Clear all posts from the queue?")) return;
   S.posts.forEach(p => {
-    if (p.slideshow) p.urls?.forEach(u => URL.revokeObjectURL(u));
-    else if (p.url)  URL.revokeObjectURL(p.url);
+    if (!p.fromFolder) {
+      if (p.slideshow) p.urls?.forEach(u => URL.revokeObjectURL(u));
+      else if (p.url)  URL.revokeObjectURL(p.url);
+    }
   });
   S.posts = [];
   renderQueue();
@@ -822,15 +1244,21 @@ async function scheduleAll() {
     try {
       const MAX_MB = 100;
       setStatus(p, "uploading");
-      let mediaItems = [];  // [{id, path}, …] — one per file
+      let mediaItems = [];
 
       if (p.slideshow) {
-        // Upload each slide individually, collect all IDs
+        // Upload each slide; fromFolder posts go via server-side path upload
         for (let i = 0; i < p.files.length; i++) {
           label.textContent = `Uploading slide ${i + 1}/${p.files.length}…`;
-          const fd = new FormData();
-          fd.append("file", p.files[i]);
-          const up = await api("POST", "/upload", fd, true);
+          let up;
+          if (p.fromFolder) {
+            // Server reads the file from disk and proxies to Postiz
+            up = await api("POST", "/upload-from-path", { path: p.files[i].path });
+          } else {
+            const fd = new FormData();
+            fd.append("file", p.files[i]);
+            up = await api("POST", "/upload", fd, true);
+          }
           mediaItems.push({ id: up.id, path: up.path });
         }
       } else {
@@ -846,9 +1274,10 @@ async function scheduleAll() {
       label.textContent = `Scheduling: ${postLabel}`;
       setStatus(p, "scheduling");
 
-      const title = (p.caption || (p.slideshow ? "Slideshow" : p.file.name)).slice(0, 100);
+      // Title: prefer explicit postTitle (from JSON theme), then caption start, then filename
+      const title = (p.postTitle || p.caption || (p.slideshow ? "Slideshow" : p.file.name)).slice(0, 100);
       const needsMusic = p.slideshow
-        ? true  // slideshows have no original audio
+        ? true
         : (p.file.type.startsWith("image/") || !(await videoHasAudio(p.url)));
 
       await api("POST", "/posts", {
@@ -860,7 +1289,7 @@ async function scheduleAll() {
           integration: { id: intId },
           value: [{
             content: p.caption,
-            image:   mediaItems   // multiple items = carousel/slideshow
+            image:   mediaItems
           }],
           settings: buildSettings(intId, title, needsMusic)
         }))
@@ -943,11 +1372,16 @@ function toast(msg, type = "") {
   }, 3800);
 }
 
-// Expose for inline onclick
-window.connect         = connect;
-window.loadIntegrations= loadIntegrations;
-window.scheduleAll     = scheduleAll;
-window.clearQueue      = clearQueue;
+// Expose for inline onclick / global use
+window.connect                   = connect;
+window.loadIntegrations          = loadIntegrations;
+window.loadSlideshowFromFolder   = loadSlideshowFromFolder;
+window.handleVideoFolderBrowse   = handleVideoFolderBrowse;
+window.handleFolderBrowse        = handleFolderBrowse;
+window.makePostFromFiles         = makePostFromFiles;
+window.buildSlideshowPostFromPaths = buildSlideshowPostFromPaths;
+window.scheduleAll             = scheduleAll;
+window.clearQueue              = clearQueue;
 </script>
 </body>
 </html>"""
@@ -966,7 +1400,11 @@ class Handler(BaseHTTPRequestHandler):
 
     # ── GET ───────────────────────────────────────────────────────────────────
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        parsed = urlparse(self.path)
+        path   = parsed.path
+        qs     = parse_qs(parsed.query)
+
+        if path in ("/", "/index.html"):
             body = HTML.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -975,8 +1413,16 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
 
-        elif self.path == "/api/integrations":
+        elif path == "/api/integrations":
             self._proxy_get("/integrations")
+
+        elif path == "/api/folder":
+            folder = unquote(qs.get("path", [""])[0])
+            self._handle_folder(folder)
+
+        elif path == "/api/file":
+            fpath = unquote(qs.get("path", [""])[0])
+            self._serve_file(fpath)
 
         else:
             self.send_response(404)
@@ -989,10 +1435,201 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy_post("/upload")
         elif self.path == "/api/posts":
             self._proxy_post("/posts")
+        elif self.path == "/api/upload-from-path":
+            self._handle_upload_from_path()
         else:
             self.send_response(404)
             self._cors()
             self.end_headers()
+
+    # ── Folder scanner ────────────────────────────────────────────────────────
+    def _handle_folder(self, folder_path):
+        """
+        Auto-detect single vs parent folder:
+          • Single: folder_path/slides/ exists  → {mode:"single", slides, metadata}
+          • Parent: subfolders each have slides/ → {mode:"multi", slideshows:[{folderName,slides,metadata},...]}
+        """
+        folder_path = os.path.expanduser(folder_path.strip())
+        if not os.path.isdir(folder_path):
+            self._err(f"Not a directory: {folder_path}")
+            return
+
+        slides_dir = os.path.join(folder_path, "slides")
+
+        if os.path.isdir(slides_dir):
+            # ── Single slideshow ─────────────────────────────────────────────
+            slides, metadata = self._read_slideshow_dir(folder_path)
+            # Always return the result — JS side shows skipped panel if < 2 slides
+            result = json.dumps({"mode": "single", "slides": slides, "metadata": metadata}).encode()
+            self._ok(result)
+
+        else:
+            # ── Parent folder: scan immediate subdirectories ─────────────────
+            try:
+                entries = sorted(os.listdir(folder_path))
+            except Exception as e:
+                self._err(str(e)); return
+
+            slideshows = []
+            skipped    = []
+            for entry in entries:
+                sub_path = os.path.join(folder_path, entry)
+                if not os.path.isdir(sub_path):
+                    continue
+                slides, metadata = self._read_slideshow_dir(sub_path)
+                slide_count = len(slides) if slides else 0
+                if slides and slide_count >= 2:
+                    slideshows.append({
+                        "folderName": entry,
+                        "slides":     slides,
+                        "metadata":   metadata
+                    })
+                    print(f"  [folder] ✓ {entry}: {slide_count} slides")
+                else:
+                    reason = "no slides/ subfolder" if slides is None else f"only {slide_count} slide(s)"
+                    skipped.append({
+                        "folderName": entry,
+                        "slideCount": slide_count,
+                        "reason":     reason
+                    })
+                    print(f"  [folder] ✗ {entry}: {reason}")
+
+            if not slideshows and not skipped:
+                self._err(f"No subfolders found in: {folder_path}")
+                return
+
+            print(f"  [folder] {len(slideshows)} queued, {len(skipped)} skipped")
+            result = json.dumps({
+                "mode":       "multi",
+                "slideshows": slideshows,
+                "skipped":    skipped
+            }).encode()
+            self._ok(result)
+
+    def _read_slideshow_dir(self, folder_path):
+        """
+        Return (slides_list, metadata_dict).
+        slides_list is always a list (may be empty); never None.
+        """
+        IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif"}
+
+        # JSON metadata
+        metadata = {}
+        try:
+            json_files = sorted(
+                f for f in os.listdir(folder_path) if f.lower().endswith(".json")
+            )
+            if json_files:
+                with open(os.path.join(folder_path, json_files[0]), encoding="utf-8") as fh:
+                    metadata = json.load(fh)
+        except Exception as ex:
+            print(f"  [folder] JSON error in {folder_path}: {ex}")
+
+        # Slides — return empty list (not None) if slides/ doesn't exist or is empty
+        slides_dir = os.path.join(folder_path, "slides")
+        if not os.path.isdir(slides_dir):
+            return [], metadata
+
+        images = sorted(
+            f for f in os.listdir(slides_dir)
+            if os.path.splitext(f.lower())[1] in IMAGE_EXTS
+        )
+
+        slides = [
+            {"name": fname,
+             "path": os.path.join(slides_dir, fname),
+             "size": os.path.getsize(os.path.join(slides_dir, fname))}
+            for fname in images
+        ]
+        return slides, metadata
+
+    # ── File server (for thumbnail previews) ─────────────────────────────────
+    def _serve_file(self, file_path):
+        """Serve a local image file to the browser for preview."""
+        file_path = os.path.expanduser(file_path.strip())
+        if not os.path.isfile(file_path):
+            self.send_response(404)
+            self._cors()
+            self.end_headers()
+            return
+
+        mime = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+        try:
+            with open(file_path, "rb") as fh:
+                data = fh.read()
+        except Exception as e:
+            self._err(str(e))
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", mime)
+        self.send_header("Content-Length", str(len(data)))
+        self._cors()
+        self.end_headers()
+        self.wfile.write(data)
+
+    # ── Server-side upload from disk path ─────────────────────────────────────
+    def _handle_upload_from_path(self):
+        """Read a file from a disk path and proxy it to Postiz /upload."""
+        try:
+            length   = int(self.headers.get("Content-Length", 0))
+            raw_body = self.rfile.read(length) if length else self.rfile.read()
+            req_data = json.loads(raw_body)
+            file_path = os.path.expanduser(req_data.get("path", "").strip())
+
+            if not os.path.isfile(file_path):
+                self._err(f"File not found: {file_path}")
+                return
+
+            filename  = os.path.basename(file_path)
+            mime_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+
+            with open(file_path, "rb") as fh:
+                file_data = fh.read()
+
+            print(f"  [upload-from-path] {filename} ({len(file_data)//1024} KB)")
+
+            # Build multipart/form-data body manually
+            boundary  = uuid.uuid4().hex
+            part_head = (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+                f"Content-Type: {mime_type}\r\n\r\n"
+            ).encode("utf-8")
+            part_tail = f"\r\n--{boundary}--\r\n".encode("utf-8")
+            multipart = part_head + file_data + part_tail
+
+            last_exc = None
+            for attempt in range(3):
+                try:
+                    req = urllib.request.Request(
+                        f"{POSTIZ_API}/upload",
+                        data=multipart,
+                        headers={
+                            "Authorization": self._auth(),
+                            "Content-Type":  f"multipart/form-data; boundary={boundary}",
+                            "Accept":        "application/json",
+                        },
+                        method="POST"
+                    )
+                    with urllib.request.urlopen(req, timeout=120) as r:
+                        resp_body = r.read()
+                    self._ok(resp_body)
+                    return
+                except urllib.error.HTTPError:
+                    raise
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < 2:
+                        print(f"  [upload retry {attempt + 1}] {exc}")
+                        time.sleep(2 ** attempt)
+                    else:
+                        raise last_exc
+
+        except urllib.error.HTTPError as e:
+            self._forward_error(e)
+        except Exception as e:
+            self._err(str(e))
 
     # ── Proxy helpers ─────────────────────────────────────────────────────────
     def _auth(self):
@@ -1009,7 +1646,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             with urllib.request.urlopen(req, timeout=30) as r:
                 body = r.read()
-            # ── Debug: dump full integration objects to terminal ─────────────
+            # Debug: dump integrations to terminal
             if endpoint == "/integrations":
                 try:
                     data = json.loads(body)
@@ -1033,8 +1670,6 @@ class Handler(BaseHTTPRequestHandler):
             ct     = self.headers.get("Content-Type", "application/json")
             body   = self.rfile.read(length) if length else self.rfile.read()
 
-            # Retry up to 3 times on transient SSL / connection errors
-            # (SSLV3_ALERT_BAD_RECORD_MAC often happens on consecutive uploads)
             last_exc = None
             for attempt in range(3):
                 try:
@@ -1053,12 +1688,12 @@ class Handler(BaseHTTPRequestHandler):
                     self._ok(resp_body)
                     return
                 except urllib.error.HTTPError:
-                    raise   # pass HTTP errors straight through — no retry
+                    raise
                 except Exception as exc:
                     last_exc = exc
                     if attempt < 2:
                         print(f"  [upload retry {attempt + 1}] {exc}")
-                        time.sleep(2 ** attempt)   # 1s, 2s backoff
+                        time.sleep(2 ** attempt)
                     else:
                         raise last_exc
 
@@ -1100,7 +1735,6 @@ class Handler(BaseHTTPRequestHandler):
     # ── Logging ───────────────────────────────────────────────────────────────
     def log_message(self, fmt, *args):
         method, path, status = args[0], args[1], args[2] if len(args) > 2 else ""
-        # Only log API calls, not the HTML page itself
         if "/api/" in path or str(status).startswith(("4", "5")):
             print(f"  {status}  {path}")
 
@@ -1111,7 +1745,6 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     url = f"http://localhost:{PORT}"
 
-    # Open browser after a short delay so the server is ready
     def open_browser():
         time.sleep(0.9)
         webbrowser.open(url)
