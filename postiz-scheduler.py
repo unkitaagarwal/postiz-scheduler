@@ -670,6 +670,20 @@ function renderInts() {
   }).join("");
 }
 
+// Propagate current defaultAccounts to every pending post and refresh their chips.
+function syncPostsToDefault() {
+  const ids = [...S.defaultAccounts];
+  S.posts.forEach(p => {
+    if (p.status !== "pending" && p.status !== "error") return;
+    p.accounts = [...ids];
+    // Refresh per-post chip visuals without a full re-render
+    S.integrations.forEach(i => {
+      const chip = document.getElementById(`chip-${p.id}-${i.id}`);
+      if (chip) chip.classList.toggle("selected", ids.includes(i.id));
+    });
+  });
+}
+
 function toggleDefaultAcc(intId) {
   if (S.defaultAccounts.has(intId)) {
     S.defaultAccounts.delete(intId);
@@ -678,8 +692,9 @@ function toggleDefaultAcc(intId) {
   }
   const chip = document.getElementById(`intchip-${intId}`);
   if (chip) chip.classList.toggle("active", S.defaultAccounts.has(intId));
+  syncPostsToDefault();
   const count = S.defaultAccounts.size;
-  toast(`${count} channel${count !== 1 ? "s" : ""} selected for new posts`, count ? "ok" : "");
+  toast(`${count} channel${count !== 1 ? "s" : ""} selected — all pending posts updated`, count ? "ok" : "");
 }
 
 function selectAllChannels() {
@@ -687,7 +702,8 @@ function selectAllChannels() {
     S.defaultAccounts.add(i.id);
     document.getElementById(`intchip-${i.id}`)?.classList.add("active");
   });
-  toast(`All ${S.integrations.length} channels selected`, "ok");
+  syncPostsToDefault();
+  toast(`All ${S.integrations.length} channels selected — all pending posts updated`, "ok");
 }
 
 function selectNoneChannels() {
@@ -695,7 +711,8 @@ function selectNoneChannels() {
   S.integrations.forEach(i => {
     document.getElementById(`intchip-${i.id}`)?.classList.remove("active");
   });
-  toast("All channels deselected — new posts won't target any channel until you pick one", "");
+  syncPostsToDefault();
+  toast("All channels deselected — pending posts cleared too", "");
 }
 
 function platform(i) {
@@ -1628,6 +1645,7 @@ window.clearQueue                  = clearQueue;
 window.toggleDefaultAcc            = toggleDefaultAcc;
 window.selectAllChannels           = selectAllChannels;
 window.selectNoneChannels          = selectNoneChannels;
+window.syncPostsToDefault          = syncPostsToDefault;
 </script>
 </body>
 </html>"""
