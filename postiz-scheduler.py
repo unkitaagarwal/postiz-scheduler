@@ -21,7 +21,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs, unquote
 
 POSTIZ_API = "https://api.postiz.com/public/v1"
-PORT = 8080
+PORT = int(os.environ.get("PORT", 8080))
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Embedded single-page HTML app
@@ -736,32 +736,39 @@ async function videoHasAudio(objectUrl) {
 }
 
 // Build platform-specific settings.
-function buildSettings(intId, title, needsMusic = false) {
+// isCarousel = true when posting multiple images (slideshow)
+function buildSettings(intId, title, needsMusic = false, isCarousel = false) {
   const int  = S.integrations.find(i => i.id === intId);
   const pl   = int ? platform(int) : "";
   const base = { title: (title || "").slice(0, 100) };
 
-  console.log(`[buildSettings] intId=${intId} platform="${pl}"`);
+  console.log(`[buildSettings] intId=${intId} platform="${pl}" carousel=${isCarousel}`);
 
   let extra = {};
 
   if (pl.includes("tiktok")) {
     extra = {
-      privacy_level:        "PUBLIC_TO_EVERYONE",
-      duet:                 false,
-      stitch:               false,
-      comment:              true,
-      autoAddMusic:         needsMusic ? "yes" : "no",
-      brand_content_toggle: false,
-      brand_organic_toggle: false,
-      content_posting_method: "DIRECT_POST"
+      privacy_level:           "PUBLIC_TO_EVERYONE",
+      duet:                    false,
+      stitch:                  false,
+      comment:                 true,
+      autoAddMusic:            needsMusic ? "yes" : "no",
+      brand_content_toggle:    false,
+      brand_organic_toggle:    false,
+      content_posting_method:  "DIRECT_POST"
     };
   } else if (pl.includes("youtube")) {
     extra = { type: "public" };
   } else if (pl.includes("linkedin")) {
     extra = { privacy_level: "PUBLIC" };
   } else if (pl.includes("instagram")) {
-    extra = { content_posting_method: "DIRECT_POST" };
+    // post_type: "post" covers both single images and carousels.
+    // trial_reel must be false for image posts — if true, Instagram rejects
+    // any non-video content and Postiz routes it through "standalone" incorrectly.
+    extra = {
+      post_type:   "post",
+      trial_reel:  false
+    };
   } else if (pl.includes("facebook")) {
     extra = {};
   }
@@ -1414,6 +1421,7 @@ async function scheduleAll() {
 
       // Title: prefer explicit postTitle (from JSON theme), then caption start, then filename
       const title = (p.postTitle || p.caption || (p.slideshow ? "Slideshow" : p.file.name)).slice(0, 100);
+      const isCarousel = p.slideshow && mediaItems.length > 1;
       const needsMusic = p.slideshow
         ? true
         : (p.file.type.startsWith("image/") || !(await videoHasAudio(p.url)));
@@ -1429,7 +1437,7 @@ async function scheduleAll() {
             content: p.caption,
             image:   mediaItems
           }],
-          settings: buildSettings(intId, title, needsMusic)
+          settings: buildSettings(intId, title, needsMusic, isCarousel)
         }))
       });
 
@@ -2089,24 +2097,26 @@ class Handler(BaseHTTPRequestHandler):
 #  Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
-    url = f"http://localhost:{PORT}"
+    host = "0.0.0.0"
+    url  = f"http://{host}:{PORT}"
 
-    def open_browser():
-        time.sleep(0.9)
-        webbrowser.open(url)
-
-    threading.Thread(target=open_browser, daemon=True).start()
+    # Only open a browser tab when running locally (not on Render/CI)
+    if not os.environ.get("RENDER"):
+        def open_browser():
+            time.sleep(0.9)
+            webbrowser.open(f"http://localhost:{PORT}")
+        threading.Thread(target=open_browser, daemon=True).start()
 
     print()
     print("  ╔══════════════════════════════════════════╗")
     print(f"  ║  🚀  Postiz Bulk Scheduler               ║")
     print(f"  ║                                          ║")
-    print(f"  ║  Open:  {url:<33}║")
+    print(f"  ║  Listening on port {PORT:<22}║")
     print(f"  ║  Stop:  Ctrl + C                         ║")
     print("  ╚══════════════════════════════════════════╝")
     print()
 
-    server = HTTPServer(("localhost", PORT), Handler)
+    server = HTTPServer((host, PORT), Handler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
