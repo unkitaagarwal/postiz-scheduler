@@ -3,7 +3,7 @@ services:
     name: postiz-scheduler
     runtime: python
     buildCommand: ""
-    startCommand: python postiz_scheduler.py
+    startCommand: python postiz-scheduler.py
     envVars:
       - key: RENDER
         value: "true"
