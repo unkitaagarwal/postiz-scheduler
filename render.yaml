@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: postiz-scheduler
+    runtime: python
+    buildCommand: ""
+    startCommand: python postiz_scheduler.py
+    envVars:
+      - key: RENDER
+        value: "true"
