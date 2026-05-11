@@ -342,6 +342,15 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
 .autofill-btn:hover { background: rgba(124,106,247,.28); border-color: var(--accent); }
 .autofill-btn:disabled { opacity: .45; cursor: not-allowed; }
 
+.cadence-settings {
+  background: var(--card2); border-radius: 10px; padding: 16px;
+  border: 1px solid var(--border);
+}
+.cadence-preview {
+  margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.9;
+  background: var(--bg); border-radius: 8px; padding: 10px 14px;
+}
+
 /* ── Skipped folders panel ── */
 .skipped-panel {
   background: var(--card); border: 1px solid var(--error);
@@ -446,6 +455,27 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
     </div>
   </div>
 
+  <!-- ── Scheduling / Cadence ── -->
+  <div class="card hidden" id="schedModeCard">
+    <div class="section-label">📅 Daily Cadence — 8 AM to 8 PM EST</div>
+    <div class="cadence-settings">
+      <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
+        <div>
+          <div class="field-label">Posts Per Day</div>
+          <input type="number" id="postsPerDay" min="1" max="12" value="3"
+                 class="dt-input" style="width:110px"
+                 oninput="cadenceChanged()">
+        </div>
+        <div>
+          <div class="field-label">Start Date</div>
+          <input type="date" id="cadenceStartDate" class="dt-input" style="width:170px"
+                 oninput="cadenceChanged()">
+        </div>
+      </div>
+      <div id="cadencePreview" class="cadence-preview"></div>
+    </div>
+  </div>
+
   <!-- ── Drop Zone ── -->
   <div class="card hidden" id="dropCard">
     <div class="section-label">Add Files</div>
@@ -540,7 +570,11 @@ const S = {
   integrations:    [],
   defaultAccounts: new Set(),   // which channels new posts should default to
   posts:           [],
-  busy:            false
+  busy:            false,
+  // scheduling mode
+  schedMode:       "cadence",   // "staggered" | "cadence"
+  postsPerDay:     3,
+  cadenceStart:    null           // Date (midnight local) for cadence start day
 };
 
 const ICONS = {
@@ -565,6 +599,7 @@ window.addEventListener("DOMContentLoaded", () => {
     document.getElementById("anthropicKeyInput").value = S.anthropicKey;
   }
   initDrop();
+  initSchedMode();
 });
 
 function saveAnthropicKey() {
@@ -605,6 +640,7 @@ async function connect() {
     await loadIntegrations();
     document.getElementById("intCard").classList.remove("hidden");
     document.getElementById("dropCard").classList.remove("hidden");
+    document.getElementById("schedModeCard").classList.remove("hidden");
     toast(`Connected — ${S.integrations.length} account(s) found`, "ok");
     btn.textContent = "Reconnect";
   } catch (e) {
@@ -762,12 +798,13 @@ function buildSettings(intId, title, needsMusic = false, isCarousel = false) {
   } else if (pl.includes("linkedin")) {
     extra = { privacy_level: "PUBLIC" };
   } else if (pl.includes("instagram")) {
-    // post_type: "post" covers both single images and carousels.
-    // trial_reel must be false for image posts — if true, Instagram rejects
-    // any non-video content and Postiz routes it through "standalone" incorrectly.
+    // Instagram carousels require DIRECT_POST (Business/Creator accounts only).
+    // REMINDER mode only supports single images/videos — not carousels.
+    // trial_reel must be false for image posts (it's for video Reels only).
     extra = {
-      post_type:   "post",
-      trial_reel:  false
+      post_type:               isCarousel ? "post" : "post",
+      content_posting_method:  "DIRECT_POST",
+      trial_reel:              false
     };
   } else if (pl.includes("facebook")) {
     extra = {};
@@ -854,6 +891,7 @@ function handleVideoFolderBrowse(input) {
   });
 
   renderQueue();
+  if (S.schedMode === "cadence") applyDailyCadence();
   toast(`Added ${ok.length} file(s) from "${folderName}"`, "ok");
 
   if (tooBig.length) {
@@ -905,6 +943,7 @@ async function handleFolderBrowse(input) {
 
       S.posts.push(makePostFromFiles(rootName, slides, meta, 0));
       renderQueue();
+      if (S.schedMode === "cadence") applyDailyCadence();
       toast(`Loaded "${rootName}": ${slides.length} slides`, "ok");
 
     } else {
@@ -965,6 +1004,7 @@ async function handleFolderBrowse(input) {
       }
 
       renderQueue();
+      if (S.schedMode === "cadence") applyDailyCadence();
       if (added) toast(`Queued ${added} slideshow(s) from "${rootName}"`, "ok");
 
       if (skippedList.length) {
@@ -1081,6 +1121,7 @@ async function loadSlideshowFromFolder() {
         added++;
       }
       renderQueue();
+      if (S.schedMode === "cadence") applyDailyCadence();
       if (added) toast(`Queued ${added} slideshow(s) from folder`, "ok");
 
       // Show skipped panel if any subfolders didn't meet the criteria
@@ -1097,6 +1138,7 @@ async function loadSlideshowFromFolder() {
       }
       S.posts.push(buildSlideshowPostFromPaths(folderName, folderPath, slides, metadata, 0));
       renderQueue();
+      if (S.schedMode === "cadence") applyDailyCadence();
       toast(`Loaded slideshow: ${slides.length} slides`, "ok");
     }
 
@@ -1155,6 +1197,7 @@ function addFiles(files) {
   });
 
   renderQueue();
+  if (S.schedMode === "cadence") applyDailyCadence();
   toast(`Added ${valid.length} file(s) to queue`, "ok");
 }
 
@@ -1174,6 +1217,108 @@ function staggeredDT(stepIndex = 0) {
 }
 
 function defaultDT() { return staggeredDT(0); }
+
+// ────────────────────────── Daily cadence scheduling ───────────────────────
+// Window: 8 AM EST (UTC-5 = 13:00 UTC) → 8 PM PST (UTC-8 = 04:00 UTC next day)
+// That is a 15-hour (900 min) window.
+// Posts are spread evenly across that window each day.
+// If more posts than postsPerDay, they overflow into subsequent days.
+
+function initSchedMode() {
+  const today = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  const todayStr = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
+  document.getElementById("cadenceStartDate").value = todayStr;
+  S.cadenceStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+}
+
+
+function cadenceChanged() {
+  const ppd = parseInt(document.getElementById("postsPerDay").value) || 3;
+  S.postsPerDay = Math.max(1, Math.min(12, ppd));
+  const dateVal = document.getElementById("cadenceStartDate").value;
+  if (dateVal) {
+    const [y, m, d] = dateVal.split("-").map(Number);
+    S.cadenceStart = new Date(y, m - 1, d);
+  }
+  applyDailyCadence();
+  updateCadencePreview();
+}
+
+// Returns UTC minutes from midnight UTC for slot i of n slots within the daily window.
+// Window: 8 AM EST (13:00 UTC) → 8 PM EST (01:00 UTC next day = 25:00) = 12 hours.
+function cadenceSlotUTCMinutes(i, n) {
+  const WIN_START = 13 * 60;   // 8 AM EST = 13:00 UTC
+  const WIN_END   = 25 * 60;   // 8 PM EST = next-day 01:00 UTC
+  const winLen    = WIN_END - WIN_START;   // 720 minutes = 12 hours
+  if (n === 1) return WIN_START + winLen / 2;   // single post → midpoint
+  return WIN_START + i * winLen / (n - 1);      // spread from start to end
+}
+
+// Return datetime-local string for global post index (0-based across all days).
+function cadenceDT(postIndex) {
+  const ppd  = S.postsPerDay || 3;
+  const day  = Math.floor(postIndex / ppd);
+  const slot = postIndex % ppd;
+
+  // Base date: cadenceStart (midnight local) + day offset
+  const base = S.cadenceStart ? new Date(S.cadenceStart) : new Date();
+  base.setHours(0, 0, 0, 0);
+  base.setDate(base.getDate() + day);
+
+  // Compute UTC midnight of that local date
+  // We use Date.UTC with local year/month/day so the slot offsets are from UTC midnight
+  const utcMidnight = Date.UTC(base.getFullYear(), base.getMonth(), base.getDate());
+  const slotUTCMs   = utcMidnight + cadenceSlotUTCMinutes(slot, ppd) * 60000;
+
+  return localDTStr(new Date(slotUTCMs));
+}
+
+// Reassign scheduled times for all pending/error posts using the cadence.
+function applyDailyCadence() {
+  if (S.schedMode !== "cadence") return;
+  const pending = S.posts.filter(p => p.status === "pending" || p.status === "error");
+  pending.forEach((p, i) => { p.when = cadenceDT(i); });
+  renderQueue();
+  updateCadencePreview();
+}
+
+function updateCadencePreview() {
+  const preview = document.getElementById("cadencePreview");
+  if (!preview) return;
+  const ppd = S.postsPerDay || 3;
+  const pendingCount = S.posts.filter(p => p.status === "pending" || p.status === "error").length;
+  const totalDays = pendingCount ? Math.ceil(pendingCount / ppd) : 2;
+  const showDays  = Math.min(totalDays, 4);
+
+  const lines = [];
+  for (let day = 0; day < showDays; day++) {
+    const slots = [];
+    for (let slot = 0; slot < ppd; slot++) {
+      const dt = new Date(cadenceDT(day * ppd + slot));
+      slots.push(dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }));
+    }
+    const base = S.cadenceStart ? new Date(S.cadenceStart) : new Date();
+    base.setHours(0, 0, 0, 0);
+    base.setDate(base.getDate() + day);
+    const label = day === 0 ? "Today" : day === 1 ? "Tomorrow"
+      : base.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+    const postNums = [];
+    for (let s = 0; s < ppd; s++) {
+      const idx = day * ppd + s;
+      if (idx < pendingCount) postNums.push(`Post ${idx + 1}`);
+    }
+    const postHint = postNums.length ? ` <span style="color:var(--accent);font-weight:600">(${postNums.join(", ")})</span>` : "";
+    lines.push(`<div><strong style="color:var(--text)">${label}:</strong> ${slots.join(" · ")}${postHint}</div>`);
+  }
+  if (totalDays > showDays) {
+    lines.push(`<div style="color:var(--muted)">…continuing for ${totalDays - showDays} more day${totalDays - showDays > 1 ? "s" : ""}</div>`);
+  }
+  const note = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);color:var(--muted);font-size:11px">
+    Times shown in your local timezone · Window = 8 AM EST → 8 PM EST (${ppd} slot${ppd>1?"s":""}/day)
+  </div>`;
+  preview.innerHTML = lines.join("") + note;
+}
 
 // ────────────────────────── Render queue ───────────────────────────────────
 function renderQueue() {
@@ -1242,7 +1387,7 @@ function cardHTML(p) {
   <div class="card-top">
     <div class="thumb" style="font-size:22px">🖼️×${p.files.length}</div>
     <div class="post-info">
-      <div class="post-fname">Slideshow — ${p.files.length} slides${p.postTitle ? ` · ${esc(p.postTitle)}` : ""}</div>
+      <div class="post-fname">Slideshow — ${p.files.length} slides${p.postTitle ? ` · ${esc(p.postTitle)}` : ""}${p.files.length > 10 ? ` <span style="background:rgba(240,185,106,.18);color:var(--warn);border-radius:5px;padding:1px 7px;font-size:11px;font-weight:700">⚠ Instagram: first 10 only</span>` : ""}</div>
       <div class="post-fsize">${subline}</div>
       <div class="post-status-row" id="sr-${p.id}">${badgeHTML(p)}</div>
       ${p.err ? `<div style="font-size:12px;color:var(--error);margin-top:4px">⚠ ${esc(p.err)}</div>` : ""}
@@ -1336,6 +1481,7 @@ function removePost(id) {
   }
   S.posts = S.posts.filter(x => x.id !== id);
   renderQueue();
+  if (S.schedMode === "cadence") applyDailyCadence();
 }
 
 function clearQueue() {
@@ -1392,16 +1538,23 @@ async function scheduleAll() {
       let mediaItems = [];
 
       if (p.slideshow) {
+        // Instagram carousels allow max 10 slides — cap here to avoid API rejection
+        const INSTA_MAX = 10;
+        const slidesToUpload = p.files.slice(0, INSTA_MAX);
+        if (p.files.length > INSTA_MAX) {
+          toast(`⚠ ${postLabel}: trimmed to ${INSTA_MAX} slides (Instagram max)`, "");
+        }
+
         // Upload each slide; fromFolder posts go via server-side path upload
-        for (let i = 0; i < p.files.length; i++) {
-          label.textContent = `Uploading slide ${i + 1}/${p.files.length}…`;
+        for (let i = 0; i < slidesToUpload.length; i++) {
+          label.textContent = `Uploading slide ${i + 1}/${slidesToUpload.length}…`;
           let up;
           if (p.fromFolder) {
             // Server reads the file from disk and proxies to Postiz
-            up = await api("POST", "/upload-from-path", { path: p.files[i].path });
+            up = await api("POST", "/upload-from-path", { path: slidesToUpload[i].path });
           } else {
             const fd = new FormData();
-            fd.append("file", p.files[i]);
+            fd.append("file", slidesToUpload[i]);
             up = await api("POST", "/upload", fd, true);
           }
           mediaItems.push({ id: up.id, path: up.path });
