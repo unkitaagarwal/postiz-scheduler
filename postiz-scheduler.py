@@ -10,7 +10,6 @@ No third-party packages required — uses only Python's standard library.
 
 import json
 import os
-import cgi
 import mimetypes
 import uuid
 import subprocess
@@ -536,81 +535,123 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
 
   <!-- ── Video Stitch Tool ── -->
   <div class="card" id="stitchCard">
-    <div class="section-label" style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+    <div class="section-label" style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
       <span>🎬</span> Stitch Source + CTA Video
     </div>
     <p style="font-size:13px;color:var(--muted);margin-bottom:18px">
-      Trim the first <strong style="color:var(--text)">N seconds</strong> of a source video, then append a full CTA clip.
-      Upload files directly or paste public URLs.
+      Pick <strong style="color:var(--text)">one video or a whole folder</strong> of source videos — each gets stitched
+      with the same CTA clip. Download individually or grab everything as a ZIP.
     </p>
 
-    <!-- Source video row -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:18px">
+
+      <!-- ── SOURCE column ── -->
       <div>
-        <div class="field-label">Source Video</div>
-        <div style="display:flex;gap:8px;margin-bottom:8px">
-          <button class="btn btn-outline btn-sm" onclick="document.getElementById('stitchSourceFile').click()">
-            📂 Browse
+        <div class="field-label">Source Videos</div>
+
+        <!-- File pickers -->
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" title="Pick individual video files"
+                  onclick="document.getElementById('stitchSourceFiles').click()">
+            📄 Browse Files
           </button>
-          <span id="stitchSourceName" style="font-size:12px;color:var(--muted);align-self:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">No file chosen</span>
+          <button class="btn btn-outline btn-sm" title="Pick an entire folder of videos"
+                  onclick="document.getElementById('stitchSourceFolder').click()">
+            📁 Browse Folder
+          </button>
+          <button class="btn btn-outline btn-sm" title="Clear source selection"
+                  onclick="stitchClearSource()" style="color:var(--error);border-color:var(--error)">✕</button>
         </div>
-        <input type="text" id="stitchSourceUrl" class="key-input"
-               placeholder="…or paste URL (https://…)"
-               style="font-size:13px"
-               oninput="stitchClearFile('source')">
-        <input type="file" id="stitchSourceFile" accept="video/*" style="display:none"
-               onchange="stitchFileChosen('source',this)">
+        <input type="file" id="stitchSourceFiles"  accept="video/*" multiple style="display:none"
+               onchange="stitchSourceFilesChosen(this)">
+        <input type="file" id="stitchSourceFolder" accept="video/*" webkitdirectory style="display:none"
+               onchange="stitchSourceFolderChosen(this)">
+
+        <!-- File list -->
+        <div id="stitchSourceList"
+             style="min-height:36px;max-height:160px;overflow-y:auto;background:var(--card2);
+                    border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--muted)">
+          No files selected
+        </div>
+
+        <!-- OR disk path -->
+        <div style="margin-top:10px;font-size:11px;color:var(--muted);margin-bottom:4px">
+          — or type a folder path (server reads from disk) —
+        </div>
+        <div style="display:flex;gap:6px">
+          <input type="text" id="stitchFolderPath" class="key-input"
+                 placeholder="/Users/harsh/Videos/sources"
+                 style="font-size:12px;flex:1"
+                 oninput="stitchClearSource()">
+        </div>
       </div>
+
+      <!-- ── CTA column ── -->
       <div>
-        <div class="field-label">CTA Video</div>
-        <div style="display:flex;gap:8px;margin-bottom:8px">
-          <button class="btn btn-outline btn-sm" onclick="document.getElementById('stitchCtaFile').click()">
+        <div class="field-label">CTA Video (single, applied to all)</div>
+        <div style="display:flex;gap:8px;margin-bottom:10px">
+          <button class="btn btn-outline btn-sm"
+                  onclick="document.getElementById('stitchCtaFile').click()">
             📂 Browse
           </button>
-          <span id="stitchCtaName" style="font-size:12px;color:var(--muted);align-self:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">No file chosen</span>
+          <span id="stitchCtaName"
+                style="font-size:12px;color:var(--muted);align-self:center;
+                       overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px">
+            No file chosen
+          </span>
         </div>
-        <input type="text" id="stitchCtaUrl" class="key-input"
-               placeholder="…or paste URL (https://…)"
-               style="font-size:13px"
-               oninput="stitchClearFile('cta')">
         <input type="file" id="stitchCtaFile" accept="video/*" style="display:none"
-               onchange="stitchFileChosen('cta',this)">
+               onchange="stitchCtaFileChosen(this)">
+        <input type="text" id="stitchCtaUrl" class="key-input"
+               placeholder="…or paste CTA URL / disk path"
+               style="font-size:12px"
+               oninput="stitchClearCta()">
       </div>
     </div>
 
-    <!-- Source seconds + action -->
-    <div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:16px">
+    <!-- Source seconds + Stitch button -->
+    <div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:6px">
       <div>
         <div class="field-label">Source clip length (seconds)</div>
         <div style="display:flex;align-items:center;gap:10px">
           <input type="range" id="stitchSecRange" min="1" max="30" value="5" step="1"
                  style="width:140px;accent-color:var(--accent)"
                  oninput="document.getElementById('stitchSecVal').textContent=this.value">
-          <span id="stitchSecVal" style="font-size:15px;font-weight:700;color:var(--accent);min-width:28px">5</span>
+          <span id="stitchSecVal"
+                style="font-size:15px;font-weight:700;color:var(--accent);min-width:28px">5</span>
           <span style="font-size:12px;color:var(--muted)">sec</span>
         </div>
       </div>
-      <button class="btn" id="stitchBtn" onclick="runStitch()" style="padding:11px 22px">
-        🎬 Stitch Videos
+      <button class="btn" id="stitchBtn" onclick="runStitch()" style="padding:11px 24px">
+        🎬 Stitch All
       </button>
     </div>
 
-    <!-- Progress / result -->
-    <div id="stitchProgress" style="display:none;margin-top:4px">
-      <div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)">
-        <span class="spin"></span> Stitching with FFmpeg — this may take a minute…
+    <!-- Progress bar -->
+    <div id="stitchProgress" style="display:none;margin-top:14px">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:6px">
+        <span id="stitchProgLabel">Stitching…</span>
+        <span id="stitchProgFrac"></span>
+      </div>
+      <div style="background:var(--card2);border-radius:6px;height:6px;overflow:hidden">
+        <div id="stitchProgFill"
+             style="height:100%;background:var(--accent);transition:width .3s;width:0%"></div>
       </div>
     </div>
-    <div id="stitchResult" style="display:none;margin-top:14px;padding:14px;background:var(--card2);border-radius:10px;border:1px solid var(--border)">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-        <div>
-          <div style="font-size:13px;font-weight:600;color:var(--success);margin-bottom:4px">✓ Stitch complete!</div>
-          <div id="stitchResultPath" style="font-size:11px;color:var(--muted);word-break:break-all"></div>
-        </div>
-        <a id="stitchDownloadLink" href="#" class="btn btn-success btn-sm" download>⬇ Download</a>
+
+    <!-- Results -->
+    <div id="stitchResults" style="display:none;margin-top:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:13px;font-weight:600;color:var(--success)" id="stitchResultsTitle">✓ Done</div>
+        <a id="stitchZipLink" href="#" class="btn btn-outline btn-sm" download="stitched_videos.zip"
+           style="display:none">⬇ Download All (ZIP)</a>
       </div>
+      <div id="stitchResultsList"
+           style="display:flex;flex-direction:column;gap:8px"></div>
     </div>
-    <div id="stitchError" style="display:none;margin-top:10px;font-size:13px;color:var(--error)"></div>
+
+    <div id="stitchError"
+         style="display:none;margin-top:12px;font-size:13px;color:var(--error)"></div>
   </div>
 
   <!-- ── Post Queue ── -->
@@ -862,11 +903,12 @@ function buildSettings(intId, title, needsMusic = false, isCarousel = false, isV
   const int  = S.integrations.find(i => i.id === intId);
   const pl   = int ? platform(int) : "";
 
-  // For YouTube Shorts: append #Shorts to title if not already present
-  let resolvedTitle = (title || "").slice(0, 100);
+  // For YouTube Shorts: append #Shorts — reserve 8 chars so it never gets truncated
+  let resolvedTitle = (title || "").slice(0, 92);
   if (pl.includes("youtube") && isVideo && !resolvedTitle.includes("#Shorts")) {
-    resolvedTitle = (resolvedTitle + " #Shorts").trim().slice(0, 100);
+    resolvedTitle = (resolvedTitle + " #Shorts").trim();
   }
+  resolvedTitle = resolvedTitle.slice(0, 100);
 
   const base = { title: resolvedTitle };
 
@@ -886,9 +928,13 @@ function buildSettings(intId, title, needsMusic = false, isCarousel = false, isV
       content_posting_method:  "DIRECT_POST"
     };
   } else if (pl.includes("youtube")) {
-    // Always "public". YouTube classifies as Shorts automatically when
-    // the video is ≤60s + vertical AND #Shorts appears in the title.
-    extra = { type: "public" };
+    // For short vertical videos post as YouTube Shorts explicitly.
+    // youtubeVideoType tells Postiz to use the Shorts upload path.
+    // type is the privacy setting (always "public").
+    extra = {
+      type:             "public",
+      youtubeVideoType: isVideo ? "short" : "video",
+    };
   } else if (pl.includes("linkedin")) {
     extra = { privacy_level: "PUBLIC" };
   } else if (pl.includes("instagram")) {
@@ -1709,14 +1755,21 @@ async function scheduleAll() {
         date: new Date(p.when).toISOString(),
         shortLink: false,
         tags: [],
-        posts: p.accounts.map(intId => ({
-          integration: { id: intId },
-          value: [{
-            content: p.caption,
-            image:   mediaItems
-          }],
-          settings: buildSettings(intId, title, needsMusic, isCarousel, isVideo)
-        }))
+        posts: p.accounts.map(intId => {
+          const intObj  = S.integrations.find(i => i.id === intId) || {};
+          const pl_     = platform(intObj);
+          // YouTube: inject #Shorts into description so the algorithm gets two signals
+          // (title already has it from buildSettings; description is the second trigger)
+          let content = p.caption;
+          if (pl_.includes("youtube") && isVideo && !content.includes("#Shorts")) {
+            content = (content + "\n\n#Shorts").trim();
+          }
+          return {
+            integration: { id: intId },
+            value: [{ content, image: mediaItems }],
+            settings: buildSettings(intId, title, needsMusic, isCarousel, isVideo)
+          };
+        })
       });
 
       setStatus(p, "done");
@@ -1779,7 +1832,8 @@ function fmtBytes(b) {
 // Steps: strip extension → remove trailing numeric timestamp → underscores to spaces → trim
 function cleanVideoTitle(filename) {
   let name = filename.replace(/\.[^.]+$/, "");        // strip extension
-  name = name.replace(/_\d{7,}$/, "");                // remove trailing _timestamp
+  name = name.replace(/_[0-9a-f]{6,12}$/i, "");      // remove trailing _hexhash  (e.g. _be73417f)
+  name = name.replace(/_\d{8,}/g, "");               // remove any _longNumber anywhere (timestamps like _1778212134827)
   name = name.replace(/_/g, " ").trim();              // underscores → spaces
   return name;
 }
@@ -1928,90 +1982,155 @@ function extractVideoFrame(videoUrl) {
 
 // ────────────────────────── Video Stitch UI ────────────────────────────────
 
-// Track chosen File objects for source/cta
-const STITCH = { sourceFile: null, ctaFile: null };
+const STITCH = {
+  sourceFiles: [],   // File[] from browser picker
+  ctaFile:     null, // File from browser picker
+};
 
-function stitchFileChosen(which, input) {
-  const file = input.files[0];
-  if (!file) return;
-  const nameEl = document.getElementById(which === "source" ? "stitchSourceName" : "stitchCtaName");
-  nameEl.textContent = file.name;
-  nameEl.title       = file.name;
-  if (which === "source") {
-    STITCH.sourceFile = file;
-    document.getElementById("stitchSourceUrl").value = "";
-  } else {
-    STITCH.ctaFile = file;
-    document.getElementById("stitchCtaUrl").value = "";
-  }
+// ── Source selection ─────────────────────────────────────────────────────────
+function stitchSourceFilesChosen(input) {
+  const files = [...input.files].filter(f => f.type.startsWith("video/"));
+  if (!files.length) return;
+  STITCH.sourceFiles = files;
+  document.getElementById("stitchFolderPath").value = "";
+  stitchRenderSourceList();
   input.value = "";
 }
 
-function stitchClearFile(which) {
-  if (which === "source") {
-    STITCH.sourceFile = null;
-    document.getElementById("stitchSourceName").textContent = "No file chosen";
-  } else {
-    STITCH.ctaFile = null;
-    document.getElementById("stitchCtaName").textContent = "No file chosen";
-  }
+function stitchSourceFolderChosen(input) {
+  const files = [...input.files].filter(f => f.type.startsWith("video/"));
+  if (!files.length) { toast("No video files found in that folder", "fail"); return; }
+  STITCH.sourceFiles = files;
+  document.getElementById("stitchFolderPath").value = "";
+  stitchRenderSourceList();
+  input.value = "";
 }
 
+function stitchClearSource() {
+  STITCH.sourceFiles = [];
+  stitchRenderSourceList();
+}
+
+function stitchRenderSourceList() {
+  const el = document.getElementById("stitchSourceList");
+  if (!STITCH.sourceFiles.length) {
+    el.innerHTML = `<span style="color:var(--muted)">No files selected</span>`;
+    return;
+  }
+  const total = STITCH.sourceFiles.reduce((s, f) => s + f.size, 0);
+  el.innerHTML =
+    `<div style="color:var(--accent);font-weight:600;margin-bottom:6px">
+       ${STITCH.sourceFiles.length} video${STITCH.sourceFiles.length > 1 ? "s" : ""} selected
+       · ${fmtBytes(total)} total
+     </div>` +
+    STITCH.sourceFiles.map(f =>
+      `<div style="display:flex;justify-content:space-between;padding:2px 0;
+                   border-bottom:1px solid var(--border)">
+         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+                      max-width:70%;color:var(--text)">${esc(f.name)}</span>
+         <span style="color:var(--muted);white-space:nowrap;margin-left:8px">${fmtBytes(f.size)}</span>
+       </div>`
+    ).join("");
+}
+
+// ── CTA selection ─────────────────────────────────────────────────────────────
+function stitchCtaFileChosen(input) {
+  const file = input.files[0];
+  if (!file) return;
+  STITCH.ctaFile = file;
+  document.getElementById("stitchCtaName").textContent = file.name;
+  document.getElementById("stitchCtaName").title       = file.name;
+  document.getElementById("stitchCtaUrl").value        = "";
+  input.value = "";
+}
+
+function stitchClearCta() {
+  STITCH.ctaFile = null;
+  document.getElementById("stitchCtaName").textContent = "No file chosen";
+}
+
+// ── Main stitch runner ────────────────────────────────────────────────────────
 async function runStitch() {
-  const btn        = document.getElementById("stitchBtn");
-  const progress   = document.getElementById("stitchProgress");
-  const resultDiv  = document.getElementById("stitchResult");
-  const errorDiv   = document.getElementById("stitchError");
-  const srcUrl     = document.getElementById("stitchSourceUrl").value.trim();
-  const ctaUrl     = document.getElementById("stitchCtaUrl").value.trim();
-  const srcSec     = parseFloat(document.getElementById("stitchSecRange").value) || 5;
+  const btn       = document.getElementById("stitchBtn");
+  const progWrap  = document.getElementById("stitchProgress");
+  const progLabel = document.getElementById("stitchProgLabel");
+  const progFrac  = document.getElementById("stitchProgFrac");
+  const progFill  = document.getElementById("stitchProgFill");
+  const resultsEl = document.getElementById("stitchResults");
+  const errorEl   = document.getElementById("stitchError");
+  const srcSec    = parseFloat(document.getElementById("stitchSecRange").value) || 5;
 
-  // Hide previous result/error
-  resultDiv.style.display = "none";
-  errorDiv.style.display  = "none";
+  resultsEl.style.display = "none";
+  errorEl.style.display   = "none";
 
-  // Validate: need source + cta via file or URL
-  const hasSourceFile = !!STITCH.sourceFile;
-  const hasCtaFile    = !!STITCH.ctaFile;
-  const hasSourceUrl  = !!srcUrl;
-  const hasCtaUrl     = !!ctaUrl;
+  const folderPath   = document.getElementById("stitchFolderPath").value.trim();
+  const ctaUrl       = document.getElementById("stitchCtaUrl").value.trim();
+  const hasFiles     = STITCH.sourceFiles.length > 0;
+  const hasFolderPath = !!folderPath;
+  const hasCtaFile   = !!STITCH.ctaFile;
+  const hasCtaUrl    = !!ctaUrl;
 
-  if (!hasSourceFile && !hasSourceUrl) {
-    errorDiv.textContent  = "⚠ Please choose a source video file or paste a URL.";
-    errorDiv.style.display = "block";
-    return;
+  // Validate source
+  if (!hasFiles && !hasFolderPath) {
+    errorEl.textContent   = "⚠ Select source video file(s) / folder, or enter a disk folder path.";
+    errorEl.style.display = "block"; return;
   }
+  // Validate CTA
   if (!hasCtaFile && !hasCtaUrl) {
-    errorDiv.textContent  = "⚠ Please choose a CTA video file or paste a URL.";
-    errorDiv.style.display = "block";
-    return;
+    errorEl.textContent   = "⚠ Choose a CTA video file or paste a URL / disk path.";
+    errorEl.style.display = "block"; return;
+  }
+  // File mode: CTA must also be a file (can't mix upload + URL)
+  if (hasFiles && !hasCtaFile) {
+    errorEl.textContent   = "⚠ When uploading source files, the CTA must also be a file (not a URL).";
+    errorEl.style.display = "block"; return;
   }
 
-  btn.disabled            = true;
-  btn.innerHTML           = `<span class="spin"></span> Stitching…`;
-  progress.style.display  = "block";
+  btn.disabled          = true;
+  btn.innerHTML         = `<span class="spin"></span> Stitching…`;
+  progWrap.style.display = "block";
+  progFill.style.width   = "0%";
+
+  const totalCount = hasFiles ? STITCH.sourceFiles.length : "?";
+  progLabel.textContent = `Stitching… (${totalCount} video${totalCount === 1 ? "" : "s"})`;
+  progFrac.textContent  = "";
+
+  // Animate indeterminate bar while waiting for server
+  let animFrame;
+  let pseudo = 0;
+  function animBar() {
+    pseudo = (pseudo + 0.8) % 100;
+    progFill.style.width = `${Math.min(pseudo, 90)}%`;
+    animFrame = requestAnimationFrame(animBar);
+  }
+  animFrame = requestAnimationFrame(animBar);
 
   try {
     let res;
 
-    if (hasSourceFile || hasCtaFile) {
-      // Multipart — use actual File objects (mix of file + URL not supported; require both as files)
-      if (!hasSourceFile || !hasCtaFile) {
-        throw new Error("When using file upload, both source and CTA must be files (not a mix of file + URL).");
-      }
+    if (hasFiles) {
+      // ── Multipart: all source files + CTA uploaded ──
       const fd = new FormData();
-      fd.append("source", STITCH.sourceFile);
-      fd.append("cta",    STITCH.ctaFile);
+      STITCH.sourceFiles.forEach(f => fd.append("source", f));
+      fd.append("cta",            STITCH.ctaFile);
       fd.append("source_seconds", srcSec);
       res = await fetch("/api/stitch-videos", { method: "POST", body: fd });
     } else {
-      // JSON with URLs
+      // ── JSON: folder path on disk + CTA URL/path ──
+      const body = {
+        folder_path:    folderPath,
+        source_seconds: srcSec,
+      };
+      if (hasCtaUrl) body.cta_url  = ctaUrl;
+      else           body.cta_path = ctaUrl; // treat as path if starts with /
       res = await fetch("/api/stitch-videos", {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ source: srcUrl, cta: ctaUrl, source_seconds: srcSec })
+        body:    JSON.stringify(body)
       });
     }
+
+    cancelAnimationFrame(animFrame);
 
     if (!res.ok) {
       const t = await res.text().catch(() => res.statusText);
@@ -2021,22 +2140,77 @@ async function runStitch() {
     }
 
     const data = await res.json();
-    document.getElementById("stitchResultPath").textContent = data.stitched_filepath || "";
-    const dlLink = document.getElementById("stitchDownloadLink");
-    dlLink.href     = data.download_url || "#";
-    dlLink.download = data.filename     || "stitched.mp4";
-    resultDiv.style.display = "block";
-    toast("🎬 Stitch complete! " + (data.message || ""), "ok");
+    progFill.style.width  = "100%";
+    progFrac.textContent  = `${data.succeeded}/${data.total}`;
+    progLabel.textContent = data.succeeded === data.total
+      ? `✓ All ${data.total} videos stitched!`
+      : `Done — ${data.succeeded}/${data.total} succeeded`;
+
+    stitchRenderResults(data);
+    toast(`🎬 Stitch done — ${data.succeeded}/${data.total} videos ready`, "ok");
 
   } catch (e) {
-    errorDiv.textContent  = "⚠ " + e.message;
-    errorDiv.style.display = "block";
+    cancelAnimationFrame(animFrame);
+    errorEl.textContent   = "⚠ " + e.message;
+    errorEl.style.display = "block";
     toast("Stitch failed: " + e.message, "fail");
+    progWrap.style.display = "none";
   }
 
-  btn.disabled           = false;
-  btn.innerHTML          = "🎬 Stitch Videos";
-  progress.style.display = "none";
+  btn.disabled  = false;
+  btn.innerHTML = "🎬 Stitch All";
+}
+
+function stitchRenderResults(data) {
+  const resultsEl  = document.getElementById("stitchResults");
+  const listEl     = document.getElementById("stitchResultsList");
+  const titleEl    = document.getElementById("stitchResultsTitle");
+  const zipLinkEl  = document.getElementById("stitchZipLink");
+
+  const ok      = (data.results || []).filter(r => r.ok);
+  const failed  = (data.results || []).filter(r => !r.ok);
+
+  titleEl.textContent = `✓ ${ok.length} of ${data.total} video${data.total > 1 ? "s" : ""} stitched`;
+  titleEl.style.color = failed.length ? "var(--warn)" : "var(--success)";
+
+  // ZIP button
+  if (data.zip_url && ok.length > 1) {
+    zipLinkEl.href          = data.zip_url;
+    zipLinkEl.style.display = "inline-flex";
+  } else {
+    zipLinkEl.style.display = "none";
+  }
+
+  listEl.innerHTML = (data.results || []).map(r => {
+    if (r.ok) {
+      return `
+<div style="display:flex;align-items:center;justify-content:space-between;
+            padding:10px 12px;background:var(--card2);border-radius:8px;
+            border:1px solid var(--border);gap:12px">
+  <div style="overflow:hidden">
+    <div style="font-size:12px;font-weight:600;color:var(--text);
+                white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.label)}</div>
+    <div style="font-size:11px;color:var(--muted);word-break:break-all;margin-top:2px">${esc(r.stitched_filepath)}</div>
+  </div>
+  <a href="${esc(r.download_url)}" class="btn btn-success btn-sm"
+     download="${esc(r.filename)}" style="white-space:nowrap;flex-shrink:0">⬇ Download</a>
+</div>`;
+    } else {
+      return `
+<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;
+            background:rgba(240,106,138,.08);border-radius:8px;
+            border:1px solid rgba(240,106,138,.3)">
+  <span style="font-size:18px">✕</span>
+  <div>
+    <div style="font-size:12px;font-weight:600;color:var(--error)">${esc(r.label)}</div>
+    <div style="font-size:11px;color:var(--muted)">${esc(r.error || "Unknown error")}</div>
+  </div>
+</div>`;
+    }
+  }).join("");
+
+  resultsEl.style.display = "block";
+  resultsEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 // Expose for inline onclick / global use
@@ -2056,8 +2230,12 @@ window.selectAllChannels           = selectAllChannels;
 window.selectNoneChannels          = selectNoneChannels;
 window.syncPostsToDefault          = syncPostsToDefault;
 window.runStitch                   = runStitch;
-window.stitchFileChosen            = stitchFileChosen;
-window.stitchClearFile             = stitchClearFile;
+window.stitchSourceFilesChosen     = stitchSourceFilesChosen;
+window.stitchSourceFolderChosen    = stitchSourceFolderChosen;
+window.stitchCtaFileChosen         = stitchCtaFileChosen;
+window.stitchClearSource           = stitchClearSource;
+window.stitchClearCta              = stitchClearCta;
+window.stitchRenderResults         = stitchRenderResults;
 </script>
 </body>
 </html>"""
@@ -2068,6 +2246,51 @@ window.stitchClearFile             = stitchClearFile;
 # ─────────────────────────────────────────────────────────────────────────────
 
 STITCH_OUTPUT_BASE = os.path.expanduser("~/Documents/stitched_profile_videos")
+
+
+def _parse_multipart(content_type: str, data: bytes) -> dict:
+    """
+    Minimal multipart/form-data parser — no external deps.
+    Returns {field_name: [{"data": bytes, "filename": str|None}, ...]}.
+    Duplicate field names (e.g. multiple 'source' files) accumulate as a list.
+    """
+    boundary = None
+    for seg in content_type.split(";"):
+        seg = seg.strip()
+        if seg.lower().startswith("boundary="):
+            boundary = seg[9:].strip('"\'')
+            break
+    if not boundary:
+        return {}
+
+    delim  = ("--" + boundary).encode()
+    result = {}
+
+    for chunk in data.split(delim)[1:]:
+        stripped = chunk.strip()
+        if stripped in (b"--", b"") or stripped.startswith(b"--"):
+            continue
+        sep = b"\r\n\r\n" if b"\r\n\r\n" in chunk else b"\n\n"
+        if sep not in chunk:
+            continue
+        raw_headers, body = chunk.split(sep, 1)
+        if body.endswith(b"\r\n"):
+            body = body[:-2]
+
+        name = filename = None
+        for line in raw_headers.split(b"\r\n"):
+            line_s = line.decode("utf-8", errors="replace")
+            if line_s.lower().startswith("content-disposition:"):
+                for part in line_s.split(";"):
+                    part = part.strip()
+                    if part.startswith("name="):
+                        name = part[5:].strip("\"'")
+                    elif part.startswith("filename="):
+                        filename = part[9:].strip("\"'")
+        if name:
+            result.setdefault(name, []).append({"data": body, "filename": filename})
+
+    return result
 
 
 def _probe_format_duration_sec(path: str):
@@ -2099,11 +2322,38 @@ def _stitch_videos_ffmpeg(
     """
     Stitch [video1 (or its first source_prefix_seconds)] then [video2].
     Audio for the entire output comes from video1 only (CTA audio is ignored).
-    Both clips are scaled to 1280x720 / 30fps / H.264 + AAC 128k.
+    Both clips are scaled to match the source orientation at 30fps / H.264 + AAC 128k.
+    Vertical source  (h > w) → 1080×1920  (9:16, for Shorts/Reels/TikTok).
+    Landscape source (w > h) → 1920×1080  (16:9).
     """
+    # ── Probe source dimensions to choose output orientation ─────────────────
+    # Default is VERTICAL (1080×1920) — correct for Shorts/Reels/TikTok.
+    # Only switch to landscape if the source is clearly wider than it is tall.
+    out_w, out_h = 1080, 1920  # safe default: portrait
+
+    _dim = subprocess.run(
+        ["ffprobe", "-v", "error",
+         "-select_streams", "v:0",
+         "-show_entries", "stream=width,height",
+         "-of", "csv=p=0",
+         video1_path],
+        capture_output=True, text=True,
+    )
+    try:
+        _parts = _dim.stdout.strip().split(",")
+        _src_w = int(_parts[0])
+        _src_h = int(_parts[1])
+        if _src_w > _src_h:          # clearly landscape source
+            out_w, out_h = 1920, 1080
+    except Exception as _probe_err:
+        _src_w, _src_h = 0, 0
+        print(f"  [stitch] ⚠ ffprobe failed ({_probe_err}), defaulting to portrait 1080×1920")
+
+    print(f"  [stitch] source dims: {_src_w}×{_src_h} → output: {out_w}×{out_h}")
+
     scale_pad = (
-        "scale=1280:720:force_original_aspect_ratio=decrease,"
-        "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30"
+        f"scale={out_w}:{out_h}:force_original_aspect_ratio=decrease,"
+        f"pad={out_w}:{out_h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30"
     )
 
     # Probe whether video1 has audio
@@ -2153,7 +2403,7 @@ def _stitch_videos_ffmpeg(
     # Video concat (with optional gap)
     if gap_sec > 0:
         gap_t = f"{gap_sec:.3f}"
-        parts.append(f"color=c=black:size=1280x720:rate=30:duration={gap_t},format=yuv420p[gv]")
+        parts.append(f"color=c=black:size={out_w}x{out_h}:rate=30:duration={gap_t},format=yuv420p[gv]")
         parts.append("[vA][gv][vB]concat=n=3:v=1:a=0[outv]")
     else:
         parts.append("[vA][vB]concat=n=2:v=1:a=0[outv]")
@@ -2248,6 +2498,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/stitch-download":
             fpath = unquote(qs.get("path", [""])[0])
             self._serve_stitched_download(fpath)
+
+        elif path == "/api/stitch-zip":
+            paths_json = unquote(qs.get("paths", ["[]"])[0])
+            self._handle_stitch_zip(paths_json)
 
         else:
             self.send_response(404)
@@ -2543,107 +2797,180 @@ class Handler(BaseHTTPRequestHandler):
     # ── Video stitcher ────────────────────────────────────────────────────────
     def _handle_stitch_videos(self):
         """
-        Accepts multipart/form-data (source + cta files) OR JSON (source_url + cta_url).
-        Optional field: source_seconds (default 5).
-        Runs FFmpeg stitch and returns the output file path + download URL.
+        Batch stitch: each source video (file upload or disk path) is stitched
+        with a single CTA, producing one output per source.
+
+        Multipart mode  — fields:
+          source   (file, repeatable — one per source video)
+          cta      (file, single)
+          source_seconds (text, default 5)
+
+        JSON mode — body:
+          {
+            "folder_path": "/abs/path/to/folder",   # scan for videos
+            "source_paths": ["/abs/path/v1.mp4"],    # explicit list of paths
+            "cta_path": "/abs/path/cta.mp4",         # cta from disk
+            "cta_url": "https://…",                  # cta from URL
+            "source_seconds": 5
+          }
         """
+        import zipfile as _zipfile
+        VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
         os.makedirs(STITCH_OUTPUT_BASE, exist_ok=True)
-        tmp_dir = tempfile.mkdtemp(prefix="stitch_two_")
-        source_path = None
-        cta_path = None
+        tmp_dir = tempfile.mkdtemp(prefix="stitch_batch_")
+
         try:
             content_type = self.headers.get("Content-Type", "").lower()
 
+            # ── resolve source paths + CTA path ───────────────────────────────
+            source_paths      = []   # list of absolute paths to source videos
+            cta_path          = None
+            source_prefix_sec = 5.0
+            source_labels     = []   # original filenames for output naming
+
             if "multipart/form-data" in content_type:
-                # Parse multipart using cgi.FieldStorage
-                environ = {
-                    "REQUEST_METHOD": "POST",
-                    "CONTENT_TYPE":   self.headers["Content-Type"],
-                    "CONTENT_LENGTH": self.headers.get("Content-Length", "0"),
-                }
-                form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
+                length = int(self.headers.get("Content-Length", 0))
+                raw    = self.rfile.read(length) if length else self.rfile.read()
+                form   = _parse_multipart(self.headers.get("Content-Type", ""), raw)
 
-                f_src = form.get("source")
-                f_cta = form.get("cta")
-                source_seconds_raw = (form.getvalue("source_seconds") or "5")
+                src_entries = form.get("source", [])
+                cta_entries = form.get("cta",    [])
+                sec_entries = form.get("source_seconds", [])
+                source_prefix_sec = float(
+                    (sec_entries[0]["data"].decode() if sec_entries else None) or "5"
+                )
 
-                if not f_src or not f_src.filename:
-                    self._err("multipart field 'source' (file) is required"); return
-                if not f_cta or not f_cta.filename:
+                if not src_entries:
+                    self._err("No source video files received"); return
+                if not cta_entries or not cta_entries[0].get("filename"):
                     self._err("multipart field 'cta' (file) is required"); return
 
-                ext_s = os.path.splitext(f_src.filename)[1] or ".mp4"
-                ext_c = os.path.splitext(f_cta.filename)[1] or ".mp4"
-                source_path = os.path.join(tmp_dir, f"source{ext_s}")
-                cta_path    = os.path.join(tmp_dir, f"cta{ext_c}")
-
-                with open(source_path, "wb") as fh:
-                    fh.write(f_src.file.read())
+                # Save CTA once
+                ext_c    = os.path.splitext(cta_entries[0]["filename"])[1] or ".mp4"
+                cta_path = os.path.join(tmp_dir, f"cta{ext_c}")
                 with open(cta_path, "wb") as fh:
-                    fh.write(f_cta.file.read())
+                    fh.write(cta_entries[0]["data"])
+
+                # Save each source file
+                for i, entry in enumerate(src_entries):
+                    if not entry.get("filename"):
+                        continue
+                    # webkitdirectory sends relative paths like "folder/video.mp4" — strip to basename
+                    base_name = os.path.basename(entry["filename"])
+                    ext_s = os.path.splitext(base_name)[1] or ".mp4"
+                    sp    = os.path.join(tmp_dir, f"src_{i}{ext_s}")
+                    with open(sp, "wb") as fh:
+                        fh.write(entry["data"])
+                    source_paths.append(sp)
+                    source_labels.append(os.path.splitext(base_name)[0])
 
             else:
-                # JSON body with URLs
+                # JSON / disk-path mode
                 length = int(self.headers.get("Content-Length", 0))
                 raw    = self.rfile.read(length) if length else self.rfile.read()
                 data   = json.loads(raw)
 
-                source_seconds_raw = data.get("source_seconds", 5)
-                src_url = (data.get("source") or data.get("source_url") or
-                           data.get("sourceVideoUrl") or "").strip()
-                cta_url = (data.get("cta") or data.get("cta_url") or
-                           data.get("ctaVideoUrl") or "").strip()
+                source_prefix_sec = float(data.get("source_seconds", 5))
 
-                if not src_url:
-                    self._err("source URL is required (or send multipart files)"); return
-                if not cta_url:
-                    self._err("cta URL is required (or send multipart files)"); return
-
-                source_path = os.path.join(tmp_dir, "source.mp4")
-                cta_path    = os.path.join(tmp_dir, "cta.mp4")
-
-                def _dl(url, dest):
-                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                # Resolve CTA
+                cta_url_raw = (data.get("cta_url") or data.get("cta") or "").strip()
+                cta_path_raw = (data.get("cta_path") or "").strip()
+                if cta_path_raw and os.path.isfile(cta_path_raw):
+                    cta_path = cta_path_raw
+                elif cta_url_raw:
+                    cta_path = os.path.join(tmp_dir, "cta.mp4")
+                    req = urllib.request.Request(
+                        cta_url_raw, headers={"User-Agent": "Mozilla/5.0"})
                     with urllib.request.urlopen(req, timeout=120) as r:
-                        with open(dest, "wb") as fh:
+                        with open(cta_path, "wb") as fh:
                             fh.write(r.read())
+                else:
+                    self._err("Provide cta_path or cta_url"); return
 
-                _dl(src_url, source_path)
-                _dl(cta_url, cta_path)
+                # Resolve sources from folder OR explicit list
+                folder_path  = (data.get("folder_path") or "").strip()
+                explicit_paths = data.get("source_paths") or []
 
-            # Validate files exist and non-empty
-            if not os.path.exists(source_path) or not os.path.getsize(source_path):
-                self._err("source video is missing or empty"); return
-            if not os.path.exists(cta_path) or not os.path.getsize(cta_path):
-                self._err("cta video is missing or empty"); return
+                if folder_path:
+                    folder_path = os.path.expanduser(folder_path)
+                    if not os.path.isdir(folder_path):
+                        self._err(f"folder_path not found: {folder_path}"); return
+                    for fname in sorted(os.listdir(folder_path)):
+                        ext = os.path.splitext(fname.lower())[1]
+                        if ext in VIDEO_EXTS:
+                            source_paths.append(os.path.join(folder_path, fname))
+                            source_labels.append(os.path.splitext(fname)[0])
+                elif explicit_paths:
+                    for p in explicit_paths:
+                        p = os.path.expanduser(p)
+                        if os.path.isfile(p):
+                            source_paths.append(p)
+                            source_labels.append(
+                                os.path.splitext(os.path.basename(p))[0])
+                else:
+                    self._err("Provide folder_path or source_paths"); return
 
-            try:
-                source_prefix_sec = float(source_seconds_raw)
-            except (TypeError, ValueError):
-                self._err("source_seconds must be a number"); return
-            if source_prefix_sec <= 0:
-                self._err("source_seconds must be positive"); return
-            source_prefix_sec = min(source_prefix_sec, 3600.0)
+            if not source_paths:
+                self._err("No valid source video files found"); return
+            if not cta_path or not os.path.exists(cta_path):
+                self._err("CTA video is missing or empty"); return
 
-            out_name     = f"stitched_{uuid.uuid4().hex}.mp4"
-            stitched_path = os.path.join(STITCH_OUTPUT_BASE, out_name)
+            source_prefix_sec = max(0.1, min(source_prefix_sec, 3600.0))
 
-            print(f"  [stitch] {source_prefix_sec}s source + full CTA → {out_name}")
-            _stitch_videos_ffmpeg(
-                source_path, cta_path, stitched_path,
-                gap_seconds=0,
-                source_prefix_seconds=source_prefix_sec,
-            )
-            print(f"  [stitch] done → {stitched_path}")
+            # ── Stitch each source with CTA ────────────────────────────────────
+            results = []
+            for i, src_path in enumerate(source_paths):
+                label = source_labels[i] if i < len(source_labels) else f"video_{i}"
+                # Sanitize: strip directory separators and characters that break filenames
+                safe_label = os.path.basename(label)
+                safe_label = "".join(c if c.isalnum() or c in "-_. #" else "_" for c in safe_label)
+                safe_label = safe_label[:60] or f"video_{i}"
+                out_name = f"stitched_{safe_label}_{uuid.uuid4().hex[:8]}.mp4"
+                out_path = os.path.join(STITCH_OUTPUT_BASE, out_name)
+                print(f"  [stitch {i+1}/{len(source_paths)}] {label} → {out_name}")
+                try:
+                    _stitch_videos_ffmpeg(
+                        src_path, cta_path, out_path,
+                        gap_seconds=0,
+                        source_prefix_seconds=source_prefix_sec,
+                    )
+                    results.append({
+                        "label":             label,
+                        "filename":          out_name,
+                        "stitched_filepath": out_path,
+                        "download_url":      f"/api/stitch-download?path={urllib.parse.quote(out_path)}",
+                        "ok":                True,
+                    })
+                    # Verify output dimensions
+                    _vfy = subprocess.run(
+                        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+                         "-show_entries", "stream=width,height",
+                         "-of", "csv=p=0", out_path],
+                        capture_output=True, text=True,
+                    )
+                    print(f"  [stitch] ✓ {out_name}  (output dims: {_vfy.stdout.strip()})")
+                except Exception as e:
+                    results.append({
+                        "label": label,
+                        "ok":    False,
+                        "error": str(e)[:200],
+                    })
+                    print(f"  [stitch] ✗ {label}: {e}")
 
-            result = json.dumps({
-                "message":          f"Stitched first {source_prefix_sec:g}s of source, then full CTA",
-                "stitched_filepath": stitched_path,
-                "filename":          out_name,
-                "download_url":      f"/api/stitch-download?path={urllib.parse.quote(stitched_path)}",
-                "source_seconds":    source_prefix_sec,
-            }).encode()
-            self._ok(result)
+            # Build a zip_url covering all successful outputs
+            ok_paths = [r["stitched_filepath"] for r in results if r.get("ok")]
+            zip_url  = ""
+            if len(ok_paths) > 1:
+                paths_param = urllib.parse.quote(json.dumps(ok_paths))
+                zip_url = f"/api/stitch-zip?paths={paths_param}"
+
+            self._ok(json.dumps({
+                "total":          len(results),
+                "succeeded":      sum(1 for r in results if r.get("ok")),
+                "source_seconds": source_prefix_sec,
+                "results":        results,
+                "zip_url":        zip_url,
+            }).encode())
 
         except RuntimeError as e:
             self._err(f"FFmpeg stitching failed: {e}")
@@ -2651,6 +2978,36 @@ class Handler(BaseHTTPRequestHandler):
             self._err(f"Stitch error: {e}")
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _handle_stitch_zip(self, paths_json: str):
+        """
+        Stream a ZIP of all stitched files whose paths are in paths_json.
+        Only files inside STITCH_OUTPUT_BASE are served (security check).
+        """
+        import zipfile as _zipfile, io as _io
+        try:
+            paths     = json.loads(paths_json)
+            real_base = os.path.realpath(STITCH_OUTPUT_BASE)
+            buf       = _io.BytesIO()
+            with _zipfile.ZipFile(buf, "w", _zipfile.ZIP_DEFLATED) as zf:
+                for p in paths:
+                    p = os.path.realpath(p)
+                    if not p.startswith(real_base):
+                        continue
+                    if not os.path.isfile(p):
+                        continue
+                    zf.write(p, os.path.basename(p))
+            zip_bytes = buf.getvalue()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(zip_bytes)))
+            self.send_header("Content-Disposition",
+                             'attachment; filename="stitched_videos.zip"')
+            self._cors()
+            self.end_headers()
+            self.wfile.write(zip_bytes)
+        except Exception as e:
+            self._err(str(e))
 
     def _serve_stitched_download(self, file_path: str):
         """Stream a stitched video file back to the browser as a download."""
