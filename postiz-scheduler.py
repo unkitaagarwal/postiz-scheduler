@@ -1061,15 +1061,49 @@ function showSkippedPanel(list) {
   panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-// ── Build a post object from real File objects ───────────────────────────────
-function makePostFromFiles(folderName, slideFiles, metadata, stepIndex) {
-  const captionParts = [];
-  if (metadata?.hook_caption)    captionParts.push(metadata.hook_caption);
-  if (metadata?.recipes?.length) captionParts.push(metadata.recipes.map(r => r.title).join("\n"));
-  if (metadata?.cta_caption?.length) {
-    captionParts.push(Array.isArray(metadata.cta_caption)
+// ── Extract caption + title from either JSON format ─────────────────────────
+// New format: { caption, title, slides[], hashtags_str, hashtags[], short_pitch, … }
+// Old format: { hook_caption, recipes[], cta_caption[], theme, … }
+function extractMeta(metadata) {
+  if (!metadata) return { caption: "", title: "" };
+
+  // Resolve hashtag string from whichever field is present
+  const hashtagsStr = (
+    metadata.hashtags_str ||
+    (Array.isArray(metadata.hashtags) ? metadata.hashtags.join(" ") : "")
+  ).trim();
+
+  // New format — caption is already fully assembled
+  if (metadata.caption) {
+    let caption = metadata.caption.trim();
+    // Append hashtags if they're not already present in the caption
+    if (hashtagsStr && !caption.includes(hashtagsStr.slice(0, 15))) {
+      caption = caption + "\n\n" + hashtagsStr;
+    }
+    return {
+      caption,
+      title: (metadata.title || metadata.slug || "").slice(0, 100)
+    };
+  }
+
+  // Old format — build caption from parts
+  const parts = [];
+  if (metadata.hook_caption) parts.push(metadata.hook_caption);
+  if (metadata.recipes?.length) parts.push(metadata.recipes.map(r => r.title).join("\n"));
+  if (metadata.cta_caption?.length) {
+    parts.push(Array.isArray(metadata.cta_caption)
       ? metadata.cta_caption.join("\n") : metadata.cta_caption);
   }
+  if (hashtagsStr) parts.push(hashtagsStr);
+  return {
+    caption: parts.join("\n\n").trim(),
+    title:   (metadata.theme || "").slice(0, 100)
+  };
+}
+
+// ── Build a post object from real File objects ───────────────────────────────
+function makePostFromFiles(folderName, slideFiles, metadata, stepIndex) {
+  const { caption, title } = extractMeta(metadata);
   const when = staggeredDT(stepIndex);
   return {
     id:         `p${Date.now()}${Math.random().toString(36).slice(2)}`,
@@ -1078,8 +1112,8 @@ function makePostFromFiles(folderName, slideFiles, metadata, stepIndex) {
     folderPath: folderName,
     files:      slideFiles,
     urls:       slideFiles.map(f => URL.createObjectURL(f)),
-    caption:    captionParts.join("\n\n").trim(),
-    postTitle:  (metadata?.theme || "").slice(0, 100),
+    caption,
+    postTitle:  title,
     accounts:   [...S.defaultAccounts],
     when,
     status:     "pending",
@@ -1154,14 +1188,7 @@ async function loadSlideshowFromFolder() {
 
 // Helper: build a post object from server-returned disk paths
 function buildSlideshowPostFromPaths(folderName, basePath, slides, metadata, stepIndex) {
-  const captionParts = [];
-  if (metadata?.hook_caption)    captionParts.push(metadata.hook_caption);
-  if (metadata?.recipes?.length) captionParts.push(metadata.recipes.map(r => r.title).join("\n"));
-  if (metadata?.cta_caption?.length) {
-    captionParts.push(Array.isArray(metadata.cta_caption)
-      ? metadata.cta_caption.join("\n") : metadata.cta_caption);
-  }
-
+  const { caption, title } = extractMeta(metadata);
   return {
     id:         `p${Date.now()}${Math.random().toString(36).slice(2)}`,
     slideshow:  true,
@@ -1169,8 +1196,8 @@ function buildSlideshowPostFromPaths(folderName, basePath, slides, metadata, ste
     folderPath: folderName,
     files:      slides,
     urls:       slides.map(s => `/api/file?path=${encodeURIComponent(s.path)}`),
-    caption:    captionParts.join("\n\n").trim(),
-    postTitle:  (metadata?.theme || "").slice(0, 100),
+    caption,
+    postTitle:  title,
     accounts:   [...S.defaultAccounts],
     when:       staggeredDT(stepIndex),
     status:     "pending",
