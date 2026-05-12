@@ -10,23 +10,18 @@ No third-party packages required — uses only Python's standard library.
 
 import json
 import os
-import cgi
 import mimetypes
 import uuid
-import subprocess
-import tempfile
-import shutil
 import urllib.request
 import urllib.error
 import webbrowser
 import threading
 import time
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import urllib.parse
 from urllib.parse import urlparse, parse_qs, unquote
 
 POSTIZ_API = "https://api.postiz.com/public/v1"
-PORT = int(os.environ.get("PORT", 8080))
+PORT = 8080
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Embedded single-page HTML app
@@ -115,19 +110,11 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
   display: flex; align-items: center; gap: 9px;
   background: var(--card2); border: 1px solid var(--border);
   border-radius: 9px; padding: 8px 13px; font-size: 13px;
-  cursor: pointer; user-select: none; transition: all .15s;
 }
-.int-chip:hover:not(.active) { border-color: var(--muted); }
-.int-chip.active {
-  border-color: var(--accent); background: rgba(124,106,247,.14);
-}
-.int-chip.active .int-name { color: var(--accent); }
 .int-chip img { width: 26px; height: 26px; border-radius: 50%; object-fit: cover; }
 .int-chip .pi { font-size: 18px; width: 26px; text-align: center; line-height: 1; }
-.int-name { font-weight: 600; line-height: 1.2; transition: color .15s; }
+.int-name { font-weight: 600; line-height: 1.2; }
 .int-platform { font-size: 11px; color: var(--muted); margin-top: 1px; }
-.int-check { font-size: 13px; margin-left: 2px; opacity: 0; transition: opacity .15s; }
-.int-chip.active .int-check { opacity: 1; }
 
 /* ── Drop zone ── */
 .drop-zone {
@@ -335,27 +322,6 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
   font-size: 12px; color: var(--muted); flex-shrink: 0;
 }
 
-/* ── Auto-fill button ── */
-.autofill-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  background: rgba(124,106,247,.15); border: 1px solid rgba(124,106,247,.35);
-  color: var(--accent); border-radius: 7px;
-  padding: 4px 10px; font-size: 11px; font-weight: 600;
-  cursor: pointer; transition: background .15s, border-color .15s;
-  font-family: inherit; white-space: nowrap;
-}
-.autofill-btn:hover { background: rgba(124,106,247,.28); border-color: var(--accent); }
-.autofill-btn:disabled { opacity: .45; cursor: not-allowed; }
-
-.cadence-settings {
-  background: var(--card2); border-radius: 10px; padding: 16px;
-  border: 1px solid var(--border);
-}
-.cadence-preview {
-  margin-top: 12px; font-size: 12px; color: var(--muted); line-height: 1.9;
-  background: var(--bg); border-radius: 8px; padding: 10px 14px;
-}
-
 /* ── Skipped folders panel ── */
 .skipped-panel {
   background: var(--card); border: 1px solid var(--error);
@@ -424,60 +390,15 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
     </div>
   </div>
 
-  <!-- ── Anthropic API Key (for auto-caption) ── -->
-  <div class="card" id="anthropicCard">
-    <div class="section-label" style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      ✨ Claude Auto-Caption &nbsp;<span style="background:rgba(124,106,247,.18);color:var(--accent);border-radius:5px;padding:1px 7px;font-size:10px;font-weight:700">Optional</span>
-    </div>
-    <div class="key-row">
-      <input class="key-input" id="anthropicKeyInput" type="password"
-             placeholder="sk-ant-… (Anthropic API key for ✨ Auto-fill captions)">
-      <button class="btn btn-outline" id="saveAnthropicBtn" onclick="saveAnthropicKey()">Save</button>
-    </div>
-    <div style="margin-top:10px;font-size:12px;color:var(--muted)">
-      Get a key at
-      <a class="link" href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
-      &nbsp;·&nbsp; Used only locally to generate captions from your media.
-    </div>
-  </div>
-
-  <!-- ── Connected Accounts / Channel Selector ── -->
+  <!-- ── Connected Accounts ── -->
   <div class="card hidden" id="intCard">
-    <div class="row" style="margin-bottom:6px">
-      <div class="section-label" style="margin:0">Post To — Select Channels</div>
+    <div class="row" style="margin-bottom:14px">
+      <div class="section-label" style="margin:0">Connected Accounts</div>
       <div class="spacer"></div>
-      <button class="btn btn-outline btn-sm" style="padding:5px 10px;font-size:11px"
-              onclick="selectAllChannels()">Select All</button>
-      <button class="btn btn-outline btn-sm" style="padding:5px 10px;font-size:11px"
-              onclick="selectNoneChannels()">Deselect All</button>
       <button class="btn btn-outline btn-sm" onclick="loadIntegrations()">↻ Refresh</button>
-    </div>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
-      Click to toggle which channels new posts will be sent to. You can also adjust per-post below.
     </div>
     <div class="int-grid" id="intGrid">
       <span style="color:var(--muted);font-size:13px">Loading…</span>
-    </div>
-  </div>
-
-  <!-- ── Scheduling / Cadence ── -->
-  <div class="card hidden" id="schedModeCard">
-    <div class="section-label">📅 Daily Cadence — 8 AM to 8 PM EST</div>
-    <div class="cadence-settings">
-      <div style="display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap">
-        <div>
-          <div class="field-label">Posts Per Day</div>
-          <input type="number" id="postsPerDay" min="1" max="12" value="3"
-                 class="dt-input" style="width:110px"
-                 oninput="cadenceChanged()">
-        </div>
-        <div>
-          <div class="field-label">Start Date</div>
-          <input type="date" id="cadenceStartDate" class="dt-input" style="width:170px"
-                 oninput="cadenceChanged()">
-        </div>
-      </div>
-      <div id="cadencePreview" class="cadence-preview"></div>
     </div>
   </div>
 
@@ -492,16 +413,9 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
         <strong>Videos &amp; Images</strong>
         <p>Drag &amp; drop files here</p>
         <p style="font-size:11px;color:var(--muted);margin-top:2px">MP4 · MOV · JPG · PNG</p>
-        <div style="display:flex;gap:8px;margin-top:16px">
-          <button class="dz-browse-btn" style="margin-top:0"
-                  onclick="event.stopPropagation();document.getElementById('fileInput').click()">
-            📄 Browse Files
-          </button>
-          <button class="dz-browse-btn" style="margin-top:0"
-                  onclick="event.stopPropagation();document.getElementById('videoFolderInput').click()">
-            📂 Browse Folder
-          </button>
-        </div>
+        <button class="dz-browse-btn" onclick="event.stopPropagation();document.getElementById('fileInput').click()">
+          📁 Browse Files
+        </button>
       </div>
 
       <!-- Slideshow / carousel via folder picker -->
@@ -529,88 +443,8 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
         </div>
       </div>
     </div>
-    <input type="file" id="fileInput"         multiple accept="video/*,image/*" style="display:none">
-    <input type="file" id="videoFolderInput" webkitdirectory style="display:none">
+    <input type="file" id="fileInput"       multiple accept="video/*,image/*" style="display:none">
     <input type="file" id="folderBrowseInput" webkitdirectory style="display:none">
-  </div>
-
-  <!-- ── Video Stitch Tool ── -->
-  <div class="card" id="stitchCard">
-    <div class="section-label" style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
-      <span>🎬</span> Stitch Source + CTA Video
-    </div>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:18px">
-      Trim the first <strong style="color:var(--text)">N seconds</strong> of a source video, then append a full CTA clip.
-      Upload files directly or paste public URLs.
-    </p>
-
-    <!-- Source video row -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
-      <div>
-        <div class="field-label">Source Video</div>
-        <div style="display:flex;gap:8px;margin-bottom:8px">
-          <button class="btn btn-outline btn-sm" onclick="document.getElementById('stitchSourceFile').click()">
-            📂 Browse
-          </button>
-          <span id="stitchSourceName" style="font-size:12px;color:var(--muted);align-self:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">No file chosen</span>
-        </div>
-        <input type="text" id="stitchSourceUrl" class="key-input"
-               placeholder="…or paste URL (https://…)"
-               style="font-size:13px"
-               oninput="stitchClearFile('source')">
-        <input type="file" id="stitchSourceFile" accept="video/*" style="display:none"
-               onchange="stitchFileChosen('source',this)">
-      </div>
-      <div>
-        <div class="field-label">CTA Video</div>
-        <div style="display:flex;gap:8px;margin-bottom:8px">
-          <button class="btn btn-outline btn-sm" onclick="document.getElementById('stitchCtaFile').click()">
-            📂 Browse
-          </button>
-          <span id="stitchCtaName" style="font-size:12px;color:var(--muted);align-self:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">No file chosen</span>
-        </div>
-        <input type="text" id="stitchCtaUrl" class="key-input"
-               placeholder="…or paste URL (https://…)"
-               style="font-size:13px"
-               oninput="stitchClearFile('cta')">
-        <input type="file" id="stitchCtaFile" accept="video/*" style="display:none"
-               onchange="stitchFileChosen('cta',this)">
-      </div>
-    </div>
-
-    <!-- Source seconds + action -->
-    <div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:16px">
-      <div>
-        <div class="field-label">Source clip length (seconds)</div>
-        <div style="display:flex;align-items:center;gap:10px">
-          <input type="range" id="stitchSecRange" min="1" max="30" value="5" step="1"
-                 style="width:140px;accent-color:var(--accent)"
-                 oninput="document.getElementById('stitchSecVal').textContent=this.value">
-          <span id="stitchSecVal" style="font-size:15px;font-weight:700;color:var(--accent);min-width:28px">5</span>
-          <span style="font-size:12px;color:var(--muted)">sec</span>
-        </div>
-      </div>
-      <button class="btn" id="stitchBtn" onclick="runStitch()" style="padding:11px 22px">
-        🎬 Stitch Videos
-      </button>
-    </div>
-
-    <!-- Progress / result -->
-    <div id="stitchProgress" style="display:none;margin-top:4px">
-      <div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted)">
-        <span class="spin"></span> Stitching with FFmpeg — this may take a minute…
-      </div>
-    </div>
-    <div id="stitchResult" style="display:none;margin-top:14px;padding:14px;background:var(--card2);border-radius:10px;border:1px solid var(--border)">
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
-        <div>
-          <div style="font-size:13px;font-weight:600;color:var(--success);margin-bottom:4px">✓ Stitch complete!</div>
-          <div id="stitchResultPath" style="font-size:11px;color:var(--muted);word-break:break-all"></div>
-        </div>
-        <a id="stitchDownloadLink" href="#" class="btn btn-success btn-sm" download>⬇ Download</a>
-      </div>
-    </div>
-    <div id="stitchError" style="display:none;margin-top:10px;font-size:13px;color:var(--error)"></div>
   </div>
 
   <!-- ── Post Queue ── -->
@@ -649,16 +483,10 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
 <script>
 // ────────────────────────── State ──────────────────────────────────────────
 const S = {
-  apiKey:          localStorage.getItem("postiz_key") || "",
-  anthropicKey:    localStorage.getItem("anthropic_key") || "",
-  integrations:    [],
-  defaultAccounts: new Set(),   // which channels new posts should default to
-  posts:           [],
-  busy:            false,
-  // scheduling mode
-  schedMode:       "cadence",   // "staggered" | "cadence"
-  postsPerDay:     3,
-  cadenceStart:    null           // Date (midnight local) for cadence start day
+  apiKey:       localStorage.getItem("postiz_key") || "",
+  integrations: [],
+  posts:        [],   // see addFiles() / loadSlideshowFromFolder() for shape
+  busy:         false
 };
 
 const ICONS = {
@@ -679,19 +507,8 @@ window.addEventListener("DOMContentLoaded", () => {
     document.getElementById("keyInput").value = S.apiKey;
     connect();
   }
-  if (S.anthropicKey) {
-    document.getElementById("anthropicKeyInput").value = S.anthropicKey;
-  }
   initDrop();
-  initSchedMode();
 });
-
-function saveAnthropicKey() {
-  const key = document.getElementById("anthropicKeyInput").value.trim();
-  S.anthropicKey = key;
-  if (key) { localStorage.setItem("anthropic_key", key); toast("Anthropic key saved", "ok"); }
-  else      { localStorage.removeItem("anthropic_key"); toast("Anthropic key cleared", "ok"); }
-}
 
 // ────────────────────────── API helpers ────────────────────────────────────
 async function api(method, path, body, isForm) {
@@ -724,7 +541,6 @@ async function connect() {
     await loadIntegrations();
     document.getElementById("intCard").classList.remove("hidden");
     document.getElementById("dropCard").classList.remove("hidden");
-    document.getElementById("schedModeCard").classList.remove("hidden");
     toast(`Connected — ${S.integrations.length} account(s) found`, "ok");
     btn.textContent = "Reconnect";
   } catch (e) {
@@ -739,23 +555,6 @@ async function loadIntegrations() {
   S.integrations = Array.isArray(data)
     ? data
     : (data.integrations || data.data || data.results || []);
-
-  // On first load, select ALL channels by default.
-  // On refresh, keep existing selection but add any newly discovered channels.
-  if (S.defaultAccounts.size === 0) {
-    S.integrations.forEach(i => S.defaultAccounts.add(i.id));
-  } else {
-    S.integrations.forEach(i => {
-      // auto-add brand-new integrations as selected
-      if (!S.defaultAccounts.has(i.id) &&
-          !S._knownIntegrationIds?.has(i.id)) {
-        S.defaultAccounts.add(i.id);
-      }
-    });
-  }
-  // remember which IDs we've seen so far
-  S._knownIntegrationIds = new Set(S.integrations.map(i => i.id));
-
   renderInts();
   // refresh account chips in any open post cards
   S.posts && renderQueue();
@@ -770,69 +569,20 @@ function renderInts() {
     return;
   }
   g.innerHTML = S.integrations.map(i => {
-    const pl  = platform(i);
-    const ic  = ICONS[pl] || ICONS.default;
+    const pl = platform(i);
+    const ic = ICONS[pl] || ICONS.default;
     const col = COLORS[pl] || COLORS.default;
-    const sel = S.defaultAccounts.has(i.id);
-    return `<div class="int-chip ${sel ? "active" : ""}" id="intchip-${i.id}"
-                 onclick="toggleDefaultAcc('${i.id}')" title="Click to toggle channel">
+    return `<div class="int-chip">
       ${i.picture
         ? `<img src="${i.picture}" onerror="this.style.display='none';this.nextElementSibling.style.display='inline'">`
         : ""}
       <span class="pi" style="${i.picture ? "display:none" : ""}">${ic}</span>
       <div>
         <div class="int-name">${esc(i.name || i.identifier || "Account")}</div>
-        <div class="int-platform" style="color:${col}"
-             title="identifier: ${esc(i.identifier||'')} | type: ${esc(i.type||'')} | provider: ${esc(i.provider||'')}">${pl || "(unknown)"}</div>
+        <div class="int-platform" style="color:${col}" title="identifier: ${esc(i.identifier||'')} | type: ${esc(i.type||'')} | provider: ${esc(i.provider||'')}">${pl || "(unknown)"}</div>
       </div>
-      <span class="int-check">✓</span>
     </div>`;
   }).join("");
-}
-
-// Propagate current defaultAccounts to every pending post and refresh their chips.
-function syncPostsToDefault() {
-  const ids = [...S.defaultAccounts];
-  S.posts.forEach(p => {
-    if (p.status !== "pending" && p.status !== "error") return;
-    p.accounts = [...ids];
-    // Refresh per-post chip visuals without a full re-render
-    S.integrations.forEach(i => {
-      const chip = document.getElementById(`chip-${p.id}-${i.id}`);
-      if (chip) chip.classList.toggle("selected", ids.includes(i.id));
-    });
-  });
-}
-
-function toggleDefaultAcc(intId) {
-  if (S.defaultAccounts.has(intId)) {
-    S.defaultAccounts.delete(intId);
-  } else {
-    S.defaultAccounts.add(intId);
-  }
-  const chip = document.getElementById(`intchip-${intId}`);
-  if (chip) chip.classList.toggle("active", S.defaultAccounts.has(intId));
-  syncPostsToDefault();
-  const count = S.defaultAccounts.size;
-  toast(`${count} channel${count !== 1 ? "s" : ""} selected — all pending posts updated`, count ? "ok" : "");
-}
-
-function selectAllChannels() {
-  S.integrations.forEach(i => {
-    S.defaultAccounts.add(i.id);
-    document.getElementById(`intchip-${i.id}`)?.classList.add("active");
-  });
-  syncPostsToDefault();
-  toast(`All ${S.integrations.length} channels selected — all pending posts updated`, "ok");
-}
-
-function selectNoneChannels() {
-  S.defaultAccounts.clear();
-  S.integrations.forEach(i => {
-    document.getElementById(`intchip-${i.id}`)?.classList.remove("active");
-  });
-  syncPostsToDefault();
-  toast("All channels deselected — pending posts cleared too", "");
 }
 
 function platform(i) {
@@ -856,50 +606,32 @@ async function videoHasAudio(objectUrl) {
 }
 
 // Build platform-specific settings.
-// isCarousel = true when posting multiple images (slideshow)
-// isVideo    = true when the post is a video file (not image/carousel)
-function buildSettings(intId, title, needsMusic = false, isCarousel = false, isVideo = false) {
+function buildSettings(intId, title, needsMusic = false) {
   const int  = S.integrations.find(i => i.id === intId);
   const pl   = int ? platform(int) : "";
+  const base = { title: (title || "").slice(0, 100) };
 
-  // For YouTube Shorts: append #Shorts to title if not already present
-  let resolvedTitle = (title || "").slice(0, 100);
-  if (pl.includes("youtube") && isVideo && !resolvedTitle.includes("#Shorts")) {
-    resolvedTitle = (resolvedTitle + " #Shorts").trim().slice(0, 100);
-  }
-
-  const base = { title: resolvedTitle };
-
-  console.log(`[buildSettings] intId=${intId} platform="${pl}" carousel=${isCarousel} video=${isVideo}`);
+  console.log(`[buildSettings] intId=${intId} platform="${pl}"`);
 
   let extra = {};
 
   if (pl.includes("tiktok")) {
     extra = {
-      privacy_level:           "PUBLIC_TO_EVERYONE",
-      duet:                    false,
-      stitch:                  false,
-      comment:                 true,
-      autoAddMusic:            needsMusic ? "yes" : "no",
-      brand_content_toggle:    false,
-      brand_organic_toggle:    false,
-      content_posting_method:  "DIRECT_POST"
+      privacy_level:        "PUBLIC_TO_EVERYONE",
+      duet:                 false,
+      stitch:               false,
+      comment:              true,
+      autoAddMusic:         needsMusic ? "yes" : "no",
+      brand_content_toggle: false,
+      brand_organic_toggle: false,
+      content_posting_method: "DIRECT_POST"
     };
   } else if (pl.includes("youtube")) {
-    // Always "public". YouTube classifies as Shorts automatically when
-    // the video is ≤60s + vertical AND #Shorts appears in the title.
     extra = { type: "public" };
   } else if (pl.includes("linkedin")) {
     extra = { privacy_level: "PUBLIC" };
   } else if (pl.includes("instagram")) {
-    // Instagram carousels require DIRECT_POST (Business/Creator accounts only).
-    // REMINDER mode only supports single images/videos — not carousels.
-    // trial_reel must be false for image posts (it's for video Reels only).
-    extra = {
-      post_type:               isCarousel ? "post" : "post",
-      content_posting_method:  "DIRECT_POST",
-      trial_reel:              false
-    };
+    extra = { content_posting_method: "DIRECT_POST" };
   } else if (pl.includes("facebook")) {
     extra = {};
   }
@@ -926,13 +658,7 @@ function initDrop() {
   });
   inp.addEventListener("change", () => { addFiles([...inp.files]); inp.value = ""; });
 
-  // ── Video folder browser (webkitdirectory) ──
-  const videoFolderInput = document.getElementById("videoFolderInput");
-  videoFolderInput.addEventListener("change", () => {
-    handleVideoFolderBrowse(videoFolderInput);
-  });
-
-  // ── Slideshow folder browser (webkitdirectory) ──
+  // ── Folder browser (webkitdirectory) ──
   const folderBrowseInput = document.getElementById("folderBrowseInput");
   folderBrowseInput.addEventListener("change", () => {
     handleFolderBrowse(folderBrowseInput);
@@ -942,55 +668,6 @@ function initDrop() {
   document.getElementById("folderInput")?.addEventListener("keydown", e => {
     if (e.key === "Enter") loadSlideshowFromFolder();
   });
-}
-
-// ────────────────────────── Handle video folder browse ──────────────────────
-function handleVideoFolderBrowse(input) {
-  const allFiles = [...input.files];
-  input.value = "";
-  if (!allFiles.length) return;
-
-  const folderName = allFiles[0].webkitRelativePath.split("/")[0];
-
-  // Accept any video or image file anywhere inside the folder (recursive)
-  const valid = allFiles.filter(f =>
-    f.type.startsWith("video/") || f.type.startsWith("image/")
-  );
-
-  // Reject oversized files early
-  const MAX_MB = 100;
-  const tooBig  = valid.filter(f => f.size > MAX_MB * 1024 * 1024);
-  const ok      = valid.filter(f => f.size <= MAX_MB * 1024 * 1024);
-
-  if (!ok.length) {
-    toast(`No valid video/image files found in "${folderName}"`, "fail");
-    return;
-  }
-
-  // Sort by full relative path so sibling folders come out grouped and ordered
-  ok.sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath, undefined, { numeric: true }));
-
-  const startStep = S.posts.filter(p => p.status === "pending").length;
-  ok.forEach((f, idx) => {
-    S.posts.push({
-      id:       `p${Date.now()}${Math.random().toString(36).slice(2)}`,
-      file:     f,
-      url:      URL.createObjectURL(f),
-      caption:  "",
-      accounts: [...S.defaultAccounts],
-      when:     staggeredDT(startStep + idx),
-      status:   "pending",
-      err:      null
-    });
-  });
-
-  renderQueue();
-  if (S.schedMode === "cadence") applyDailyCadence();
-  toast(`Added ${ok.length} file(s) from "${folderName}"`, "ok");
-
-  if (tooBig.length) {
-    toast(`Skipped ${tooBig.length} file(s) over ${MAX_MB} MB`, "fail");
-  }
 }
 
 // ────────────────────────── Handle folder browse (webkitdirectory) ─────────
@@ -1037,7 +714,6 @@ async function handleFolderBrowse(input) {
 
       S.posts.push(makePostFromFiles(rootName, slides, meta, 0));
       renderQueue();
-      if (S.schedMode === "cadence") applyDailyCadence();
       toast(`Loaded "${rootName}": ${slides.length} slides`, "ok");
 
     } else {
@@ -1098,7 +774,6 @@ async function handleFolderBrowse(input) {
       }
 
       renderQueue();
-      if (S.schedMode === "cadence") applyDailyCadence();
       if (added) toast(`Queued ${added} slideshow(s) from "${rootName}"`, "ok");
 
       if (skippedList.length) {
@@ -1155,50 +830,17 @@ function showSkippedPanel(list) {
   panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-// ── Extract caption + title from either JSON format ─────────────────────────
-// New format: { caption, title, slides[], hashtags_str, hashtags[], short_pitch, … }
-// Old format: { hook_caption, recipes[], cta_caption[], theme, … }
-function extractMeta(metadata) {
-  if (!metadata) return { caption: "", title: "" };
-
-  // Resolve hashtag string from whichever field is present
-  const hashtagsStr = (
-    metadata.hashtags_str ||
-    (Array.isArray(metadata.hashtags) ? metadata.hashtags.join(" ") : "")
-  ).trim();
-
-  // New format — caption is already fully assembled
-  if (metadata.caption) {
-    let caption = metadata.caption.trim();
-    // Append hashtags if they're not already present in the caption
-    if (hashtagsStr && !caption.includes(hashtagsStr.slice(0, 15))) {
-      caption = caption + "\n\n" + hashtagsStr;
-    }
-    return {
-      caption,
-      title: (metadata.title || metadata.slug || "").slice(0, 100)
-    };
-  }
-
-  // Old format — build caption from parts
-  const parts = [];
-  if (metadata.hook_caption) parts.push(metadata.hook_caption);
-  if (metadata.recipes?.length) parts.push(metadata.recipes.map(r => r.title).join("\n"));
-  if (metadata.cta_caption?.length) {
-    parts.push(Array.isArray(metadata.cta_caption)
+// ── Build a post object from real File objects ───────────────────────────────
+function makePostFromFiles(folderName, slideFiles, metadata, hourOffset) {
+  const captionParts = [];
+  if (metadata?.hook_caption)    captionParts.push(metadata.hook_caption);
+  if (metadata?.recipes?.length) captionParts.push(metadata.recipes.map(r => r.title).join("\n"));
+  if (metadata?.cta_caption?.length) {
+    captionParts.push(Array.isArray(metadata.cta_caption)
       ? metadata.cta_caption.join("\n") : metadata.cta_caption);
   }
-  if (hashtagsStr) parts.push(hashtagsStr);
-  return {
-    caption: parts.join("\n\n").trim(),
-    title:   (metadata.theme || "").slice(0, 100)
-  };
-}
-
-// ── Build a post object from real File objects ───────────────────────────────
-function makePostFromFiles(folderName, slideFiles, metadata, stepIndex) {
-  const { caption, title } = extractMeta(metadata);
-  const when = staggeredDT(stepIndex);
+  const when = new Date();
+  when.setHours(when.getHours() + 1 + hourOffset, 0, 0, 0);
   return {
     id:         `p${Date.now()}${Math.random().toString(36).slice(2)}`,
     slideshow:  true,
@@ -1206,10 +848,10 @@ function makePostFromFiles(folderName, slideFiles, metadata, stepIndex) {
     folderPath: folderName,
     files:      slideFiles,
     urls:       slideFiles.map(f => URL.createObjectURL(f)),
-    caption,
-    postTitle:  title,
-    accounts:   [...S.defaultAccounts],
-    when,
+    caption:    captionParts.join("\n\n").trim(),
+    postTitle:  (metadata?.theme || "").slice(0, 100),
+    accounts:   S.integrations.map(i => i.id),
+    when:       when.toISOString().slice(0, 16),
     status:     "pending",
     err:        null
   };
@@ -1249,7 +891,6 @@ async function loadSlideshowFromFolder() {
         added++;
       }
       renderQueue();
-      if (S.schedMode === "cadence") applyDailyCadence();
       if (added) toast(`Queued ${added} slideshow(s) from folder`, "ok");
 
       // Show skipped panel if any subfolders didn't meet the criteria
@@ -1266,7 +907,6 @@ async function loadSlideshowFromFolder() {
       }
       S.posts.push(buildSlideshowPostFromPaths(folderName, folderPath, slides, metadata, 0));
       renderQueue();
-      if (S.schedMode === "cadence") applyDailyCadence();
       toast(`Loaded slideshow: ${slides.length} slides`, "ok");
     }
 
@@ -1281,8 +921,18 @@ async function loadSlideshowFromFolder() {
 }
 
 // Helper: build a post object from server-returned disk paths
-function buildSlideshowPostFromPaths(folderName, basePath, slides, metadata, stepIndex) {
-  const { caption, title } = extractMeta(metadata);
+function buildSlideshowPostFromPaths(folderName, basePath, slides, metadata, hourOffset) {
+  const captionParts = [];
+  if (metadata?.hook_caption)    captionParts.push(metadata.hook_caption);
+  if (metadata?.recipes?.length) captionParts.push(metadata.recipes.map(r => r.title).join("\n"));
+  if (metadata?.cta_caption?.length) {
+    captionParts.push(Array.isArray(metadata.cta_caption)
+      ? metadata.cta_caption.join("\n") : metadata.cta_caption);
+  }
+
+  const when = new Date();
+  when.setHours(when.getHours() + 1 + hourOffset, 0, 0, 0);
+
   return {
     id:         `p${Date.now()}${Math.random().toString(36).slice(2)}`,
     slideshow:  true,
@@ -1290,10 +940,10 @@ function buildSlideshowPostFromPaths(folderName, basePath, slides, metadata, ste
     folderPath: folderName,
     files:      slides,
     urls:       slides.map(s => `/api/file?path=${encodeURIComponent(s.path)}`),
-    caption,
-    postTitle:  title,
-    accounts:   [...S.defaultAccounts],
-    when:       staggeredDT(stepIndex),
+    caption:    captionParts.join("\n\n").trim(),
+    postTitle:  (metadata?.theme || "").slice(0, 100),
+    accounts:   S.integrations.map(i => i.id),
+    when:       when.toISOString().slice(0, 16),
     status:     "pending",
     err:        null
   };
@@ -1303,142 +953,27 @@ function addFiles(files) {
   const valid = files.filter(f => f.type.startsWith("video/") || f.type.startsWith("image/"));
   if (!valid.length) { toast("No valid video or image files", "fail"); return; }
 
-  const startStep = S.posts.filter(p => p.status === "pending").length;
-  valid.forEach((f, idx) => {
+  valid.forEach(f => {
     S.posts.push({
       id:       `p${Date.now()}${Math.random().toString(36).slice(2)}`,
       file:     f,
       url:      URL.createObjectURL(f),
       caption:  "",
-      accounts: [...S.defaultAccounts],
-      when:     staggeredDT(startStep + idx),
+      accounts: S.integrations.map(i => i.id),
+      when:     defaultDT(),
       status:   "pending",
       err:      null
     });
   });
 
   renderQueue();
-  if (S.schedMode === "cadence") applyDailyCadence();
   toast(`Added ${valid.length} file(s) to queue`, "ok");
 }
 
-// Format a Date as a local-time string for datetime-local inputs.
-// toISOString() gives UTC which datetime-local misinterprets in non-UTC timezones.
-function localDTStr(d) {
-  const pad = n => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-// First post: now + 15 min. Each subsequent: +90 min per step.
-function staggeredDT(stepIndex = 0) {
+function defaultDT() {
   const d = new Date();
-  d.setSeconds(0, 0);
-  d.setMinutes(d.getMinutes() + 15 + stepIndex * 90);
-  return localDTStr(d);
-}
-
-function defaultDT() { return staggeredDT(0); }
-
-// ────────────────────────── Daily cadence scheduling ───────────────────────
-// Window: 8 AM EST (UTC-5 = 13:00 UTC) → 8 PM PST (UTC-8 = 04:00 UTC next day)
-// That is a 15-hour (900 min) window.
-// Posts are spread evenly across that window each day.
-// If more posts than postsPerDay, they overflow into subsequent days.
-
-function initSchedMode() {
-  const today = new Date();
-  const pad = n => String(n).padStart(2, "0");
-  const todayStr = `${today.getFullYear()}-${pad(today.getMonth()+1)}-${pad(today.getDate())}`;
-  document.getElementById("cadenceStartDate").value = todayStr;
-  S.cadenceStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-}
-
-
-function cadenceChanged() {
-  const ppd = parseInt(document.getElementById("postsPerDay").value) || 3;
-  S.postsPerDay = Math.max(1, Math.min(12, ppd));
-  const dateVal = document.getElementById("cadenceStartDate").value;
-  if (dateVal) {
-    const [y, m, d] = dateVal.split("-").map(Number);
-    S.cadenceStart = new Date(y, m - 1, d);
-  }
-  applyDailyCadence();
-  updateCadencePreview();
-}
-
-// Returns UTC minutes from midnight UTC for slot i of n slots within the daily window.
-// Window: 8 AM EST (13:00 UTC) → 8 PM EST (01:00 UTC next day = 25:00) = 12 hours.
-function cadenceSlotUTCMinutes(i, n) {
-  const WIN_START = 13 * 60;   // 8 AM EST = 13:00 UTC
-  const WIN_END   = 25 * 60;   // 8 PM EST = next-day 01:00 UTC
-  const winLen    = WIN_END - WIN_START;   // 720 minutes = 12 hours
-  if (n === 1) return WIN_START + winLen / 2;   // single post → midpoint
-  return WIN_START + i * winLen / (n - 1);      // spread from start to end
-}
-
-// Return datetime-local string for global post index (0-based across all days).
-function cadenceDT(postIndex) {
-  const ppd  = S.postsPerDay || 3;
-  const day  = Math.floor(postIndex / ppd);
-  const slot = postIndex % ppd;
-
-  // Base date: cadenceStart (midnight local) + day offset
-  const base = S.cadenceStart ? new Date(S.cadenceStart) : new Date();
-  base.setHours(0, 0, 0, 0);
-  base.setDate(base.getDate() + day);
-
-  // Compute UTC midnight of that local date
-  // We use Date.UTC with local year/month/day so the slot offsets are from UTC midnight
-  const utcMidnight = Date.UTC(base.getFullYear(), base.getMonth(), base.getDate());
-  const slotUTCMs   = utcMidnight + cadenceSlotUTCMinutes(slot, ppd) * 60000;
-
-  return localDTStr(new Date(slotUTCMs));
-}
-
-// Reassign scheduled times for all pending/error posts using the cadence.
-function applyDailyCadence() {
-  if (S.schedMode !== "cadence") return;
-  const pending = S.posts.filter(p => p.status === "pending" || p.status === "error");
-  pending.forEach((p, i) => { p.when = cadenceDT(i); });
-  renderQueue();
-  updateCadencePreview();
-}
-
-function updateCadencePreview() {
-  const preview = document.getElementById("cadencePreview");
-  if (!preview) return;
-  const ppd = S.postsPerDay || 3;
-  const pendingCount = S.posts.filter(p => p.status === "pending" || p.status === "error").length;
-  const totalDays = pendingCount ? Math.ceil(pendingCount / ppd) : 2;
-  const showDays  = Math.min(totalDays, 4);
-
-  const lines = [];
-  for (let day = 0; day < showDays; day++) {
-    const slots = [];
-    for (let slot = 0; slot < ppd; slot++) {
-      const dt = new Date(cadenceDT(day * ppd + slot));
-      slots.push(dt.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }));
-    }
-    const base = S.cadenceStart ? new Date(S.cadenceStart) : new Date();
-    base.setHours(0, 0, 0, 0);
-    base.setDate(base.getDate() + day);
-    const label = day === 0 ? "Today" : day === 1 ? "Tomorrow"
-      : base.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-    const postNums = [];
-    for (let s = 0; s < ppd; s++) {
-      const idx = day * ppd + s;
-      if (idx < pendingCount) postNums.push(`Post ${idx + 1}`);
-    }
-    const postHint = postNums.length ? ` <span style="color:var(--accent);font-weight:600">(${postNums.join(", ")})</span>` : "";
-    lines.push(`<div><strong style="color:var(--text)">${label}:</strong> ${slots.join(" · ")}${postHint}</div>`);
-  }
-  if (totalDays > showDays) {
-    lines.push(`<div style="color:var(--muted)">…continuing for ${totalDays - showDays} more day${totalDays - showDays > 1 ? "s" : ""}</div>`);
-  }
-  const note = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);color:var(--muted);font-size:11px">
-    Times shown in your local timezone · Window = 8 AM EST → 8 PM EST (${ppd} slot${ppd>1?"s":""}/day)
-  </div>`;
-  preview.innerHTML = lines.join("") + note;
+  d.setHours(d.getHours() + 1, 0, 0, 0);
+  return d.toISOString().slice(0, 16);
 }
 
 // ────────────────────────── Render queue ───────────────────────────────────
@@ -1508,7 +1043,7 @@ function cardHTML(p) {
   <div class="card-top">
     <div class="thumb" style="font-size:22px">🖼️×${p.files.length}</div>
     <div class="post-info">
-      <div class="post-fname">Slideshow — ${p.files.length} slides${p.postTitle ? ` · ${esc(p.postTitle)}` : ""}${p.files.length > 10 ? ` <span style="background:rgba(240,185,106,.18);color:var(--warn);border-radius:5px;padding:1px 7px;font-size:11px;font-weight:700">⚠ Instagram: first 10 only</span>` : ""}</div>
+      <div class="post-fname">Slideshow — ${p.files.length} slides${p.postTitle ? ` · ${esc(p.postTitle)}` : ""}</div>
       <div class="post-fsize">${subline}</div>
       <div class="post-status-row" id="sr-${p.id}">${badgeHTML(p)}</div>
       ${p.err ? `<div style="font-size:12px;color:var(--error);margin-top:4px">⚠ ${esc(p.err)}</div>` : ""}
@@ -1519,17 +1054,14 @@ function cardHTML(p) {
   ${editable ? `
   <div class="card-body" style="margin-top:14px">
     <div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
-        <div class="field-label" style="margin:0">Caption</div>
-        <button class="autofill-btn" id="gen-${p.id}" onclick="generateCaption('${p.id}')">✨ Auto-fill</button>
-      </div>
+      <div class="field-label">Caption</div>
       <textarea class="caption-ta" id="cap-${p.id}" style="min-height:120px"
-        placeholder="Write your caption… or click ✨ Auto-fill">${esc(p.caption)}</textarea>
+        placeholder="Write your caption…">${esc(p.caption)}</textarea>
     </div>
     <div>
       <div class="field-label">Schedule Date &amp; Time</div>
       <input class="dt-input" type="datetime-local" id="dt-${p.id}"
-             value="${p.when}" min="${localDTStr(new Date())}">
+             value="${p.when}" min="${new Date().toISOString().slice(0,16)}">
       <div class="field-label" style="margin-top:14px">Post To</div>
       <div class="acc-grid">${accChipsHTML(p)}</div>
     </div>
@@ -1561,17 +1093,13 @@ function cardHTML(p) {
   ${editable ? `
   <div class="card-body">
     <div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
-        <div class="field-label" style="margin:0">Caption</div>
-        <button class="autofill-btn" id="gen-${p.id}" onclick="generateCaption('${p.id}')">✨ Auto-fill</button>
-      </div>
-      <textarea class="caption-ta" id="cap-${p.id}"
-        placeholder="Write your caption… or click ✨ Auto-fill">${esc(p.caption)}</textarea>
+      <div class="field-label">Caption</div>
+      <textarea class="caption-ta" id="cap-${p.id}" placeholder="Write your caption…">${esc(p.caption)}</textarea>
     </div>
     <div>
       <div class="field-label">Schedule Date &amp; Time</div>
       <input class="dt-input" type="datetime-local" id="dt-${p.id}"
-             value="${p.when}" min="${localDTStr(new Date())}">
+             value="${p.when}" min="${new Date().toISOString().slice(0,16)}">
       <div class="field-label" style="margin-top:14px">Post To</div>
       <div class="acc-grid">${accChipsHTML(p)}</div>
     </div>
@@ -1602,7 +1130,6 @@ function removePost(id) {
   }
   S.posts = S.posts.filter(x => x.id !== id);
   renderQueue();
-  if (S.schedMode === "cadence") applyDailyCadence();
 }
 
 function clearQueue() {
@@ -1659,23 +1186,16 @@ async function scheduleAll() {
       let mediaItems = [];
 
       if (p.slideshow) {
-        // Instagram carousels allow max 10 slides — cap here to avoid API rejection
-        const INSTA_MAX = 10;
-        const slidesToUpload = p.files.slice(0, INSTA_MAX);
-        if (p.files.length > INSTA_MAX) {
-          toast(`⚠ ${postLabel}: trimmed to ${INSTA_MAX} slides (Instagram max)`, "");
-        }
-
         // Upload each slide; fromFolder posts go via server-side path upload
-        for (let i = 0; i < slidesToUpload.length; i++) {
-          label.textContent = `Uploading slide ${i + 1}/${slidesToUpload.length}…`;
+        for (let i = 0; i < p.files.length; i++) {
+          label.textContent = `Uploading slide ${i + 1}/${p.files.length}…`;
           let up;
           if (p.fromFolder) {
             // Server reads the file from disk and proxies to Postiz
-            up = await api("POST", "/upload-from-path", { path: slidesToUpload[i].path });
+            up = await api("POST", "/upload-from-path", { path: p.files[i].path });
           } else {
             const fd = new FormData();
-            fd.append("file", slidesToUpload[i]);
+            fd.append("file", p.files[i]);
             up = await api("POST", "/upload", fd, true);
           }
           mediaItems.push({ id: up.id, path: up.path });
@@ -1693,13 +1213,8 @@ async function scheduleAll() {
       label.textContent = `Scheduling: ${postLabel}`;
       setStatus(p, "scheduling");
 
-      // Title: prefer explicit postTitle (from JSON), else clean filename for videos, else caption
-      const rawTitle = p.slideshow
-        ? (p.postTitle || "Slideshow")
-        : (p.postTitle || cleanVideoTitle(p.file.name) || p.caption || p.file.name);
-      const title = rawTitle.slice(0, 100);
-      const isCarousel = p.slideshow && mediaItems.length > 1;
-      const isVideo    = !p.slideshow && p.file?.type?.startsWith("video/");
+      // Title: prefer explicit postTitle (from JSON theme), then caption start, then filename
+      const title = (p.postTitle || p.caption || (p.slideshow ? "Slideshow" : p.file.name)).slice(0, 100);
       const needsMusic = p.slideshow
         ? true
         : (p.file.type.startsWith("image/") || !(await videoHasAudio(p.url)));
@@ -1715,7 +1230,7 @@ async function scheduleAll() {
             content: p.caption,
             image:   mediaItems
           }],
-          settings: buildSettings(intId, title, needsMusic, isCarousel, isVideo)
+          settings: buildSettings(intId, title, needsMusic)
         }))
       });
 
@@ -1774,16 +1289,6 @@ function fmtBytes(b) {
   if (b < 1048576)  return (b/1024).toFixed(1) + " KB";
   return (b/1048576).toFixed(1) + " MB";
 }
-// Extract a clean human title from a video filename.
-// "grill_#recipe_1778212134827.mp4" → "grill #recipe"
-// Steps: strip extension → remove trailing numeric timestamp → underscores to spaces → trim
-function cleanVideoTitle(filename) {
-  let name = filename.replace(/\.[^.]+$/, "");        // strip extension
-  name = name.replace(/_\d{7,}$/, "");                // remove trailing _timestamp
-  name = name.replace(/_/g, " ").trim();              // underscores → spaces
-  return name;
-}
-
 function fmtDate(s) {
   if (!s) return "—";
   return new Date(s).toLocaleString(undefined, {
@@ -1806,406 +1311,18 @@ function toast(msg, type = "") {
   }, 3800);
 }
 
-// ────────────────────────── Auto-caption (Claude Vision) ───────────────────
-async function generateCaption(postId) {
-  if (!S.anthropicKey) {
-    toast("Add your Anthropic API key in the ✨ Claude Auto-Caption section first", "fail");
-    return;
-  }
-
-  const p = S.posts.find(x => x.id === postId);
-  if (!p) return;
-
-  const btn = byId(`gen-${postId}`);
-  if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spin"></span> Generating…`; }
-
-  try {
-    let imageB64, mediaType;
-
-    if (p.slideshow) {
-      // Use first slide as the reference image
-      if (p.fromFolder) {
-        const resp = await fetch(p.urls[0]);
-        const blob = await resp.blob();
-        mediaType = blob.type || "image/png";
-        imageB64 = await blobToBase64Strip(blob);
-      } else {
-        mediaType = p.files[0].type || "image/png";
-        imageB64 = await fileToBase64Strip(p.files[0]);
-      }
-    } else if (p.file.type.startsWith("video/")) {
-      mediaType  = "image/jpeg";
-      imageB64   = await extractVideoFrame(p.url);
-      if (!imageB64) throw new Error("Could not extract a frame from the video");
-    } else {
-      mediaType = p.file.type || "image/jpeg";
-      imageB64  = await fileToBase64Strip(p.file);
-    }
-
-    // Collect connected platform names for context
-    const platforms = [...new Set(
-      p.accounts.map(id => {
-        const int = S.integrations.find(i => i.id === id);
-        return int ? platform(int) : "";
-      }).filter(Boolean)
-    )];
-
-    const res = await fetch("/api/generate", {
-      method:  "POST",
-      headers: {
-        "Content-Type":    "application/json",
-        "Authorization":   S.apiKey,
-        "X-Anthropic-Key": S.anthropicKey
-      },
-      body: JSON.stringify({ image: imageB64, mediaType, platforms })
-    });
-
-    if (!res.ok) {
-      const t = await res.text().catch(() => res.statusText);
-      throw new Error(t.slice(0, 200));
-    }
-
-    const data = await res.json();
-
-    // Build full caption: hook + blank line + hashtags
-    const parts = [data.caption, data.hashtags].filter(Boolean);
-    p.caption   = parts.join("\n\n").trim();
-    p.postTitle = (data.title || p.postTitle || "").slice(0, 100);
-
-    // Patch textarea and title display live without full re-render
-    const ta = byId(`cap-${postId}`);
-    if (ta) ta.value = p.caption;
-    toast("✨ Caption generated!", "ok");
-
-  } catch (e) {
-    toast("Auto-fill failed: " + e.message, "fail");
-  }
-
-  if (btn) { btn.disabled = false; btn.innerHTML = "✨ Auto-fill"; }
-}
-
-// ── Read a File as base64 (strip data-URL prefix) ──────────────────────────
-function fileToBase64Strip(file) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload  = () => resolve(r.result.replace(/^data:[^;]+;base64,/, ""));
-    r.onerror = reject;
-    r.readAsDataURL(file);
-  });
-}
-
-function blobToBase64Strip(blob) {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload  = () => resolve(r.result.replace(/^data:[^;]+;base64,/, ""));
-    r.onerror = reject;
-    r.readAsDataURL(blob);
-  });
-}
-
-// ── Extract a JPEG frame from a video at ~1 s (or midpoint) ────────────────
-function extractVideoFrame(videoUrl) {
-  return new Promise(resolve => {
-    const v = document.createElement("video");
-    v.src = videoUrl; v.muted = true; v.playsInline = true;
-    const done = result => { v.src = ""; resolve(result); };
-    v.onloadeddata = () => { v.currentTime = Math.min(1, (v.duration || 2) / 2); };
-    v.onseeked = () => {
-      try {
-        const MAX = 1024;
-        const sc  = Math.min(1, MAX / Math.max(v.videoWidth || 640, v.videoHeight || 480));
-        const c   = document.createElement("canvas");
-        c.width   = Math.round((v.videoWidth  || 640) * sc);
-        c.height  = Math.round((v.videoHeight || 480) * sc);
-        c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
-        done(c.toDataURL("image/jpeg", 0.82).replace(/^data:[^;]+;base64,/, ""));
-      } catch(e) { done(null); }
-    };
-    v.onerror = () => done(null);
-    setTimeout(() => done(null), 8000);
-  });
-}
-
-// ────────────────────────── Video Stitch UI ────────────────────────────────
-
-// Track chosen File objects for source/cta
-const STITCH = { sourceFile: null, ctaFile: null };
-
-function stitchFileChosen(which, input) {
-  const file = input.files[0];
-  if (!file) return;
-  const nameEl = document.getElementById(which === "source" ? "stitchSourceName" : "stitchCtaName");
-  nameEl.textContent = file.name;
-  nameEl.title       = file.name;
-  if (which === "source") {
-    STITCH.sourceFile = file;
-    document.getElementById("stitchSourceUrl").value = "";
-  } else {
-    STITCH.ctaFile = file;
-    document.getElementById("stitchCtaUrl").value = "";
-  }
-  input.value = "";
-}
-
-function stitchClearFile(which) {
-  if (which === "source") {
-    STITCH.sourceFile = null;
-    document.getElementById("stitchSourceName").textContent = "No file chosen";
-  } else {
-    STITCH.ctaFile = null;
-    document.getElementById("stitchCtaName").textContent = "No file chosen";
-  }
-}
-
-async function runStitch() {
-  const btn        = document.getElementById("stitchBtn");
-  const progress   = document.getElementById("stitchProgress");
-  const resultDiv  = document.getElementById("stitchResult");
-  const errorDiv   = document.getElementById("stitchError");
-  const srcUrl     = document.getElementById("stitchSourceUrl").value.trim();
-  const ctaUrl     = document.getElementById("stitchCtaUrl").value.trim();
-  const srcSec     = parseFloat(document.getElementById("stitchSecRange").value) || 5;
-
-  // Hide previous result/error
-  resultDiv.style.display = "none";
-  errorDiv.style.display  = "none";
-
-  // Validate: need source + cta via file or URL
-  const hasSourceFile = !!STITCH.sourceFile;
-  const hasCtaFile    = !!STITCH.ctaFile;
-  const hasSourceUrl  = !!srcUrl;
-  const hasCtaUrl     = !!ctaUrl;
-
-  if (!hasSourceFile && !hasSourceUrl) {
-    errorDiv.textContent  = "⚠ Please choose a source video file or paste a URL.";
-    errorDiv.style.display = "block";
-    return;
-  }
-  if (!hasCtaFile && !hasCtaUrl) {
-    errorDiv.textContent  = "⚠ Please choose a CTA video file or paste a URL.";
-    errorDiv.style.display = "block";
-    return;
-  }
-
-  btn.disabled            = true;
-  btn.innerHTML           = `<span class="spin"></span> Stitching…`;
-  progress.style.display  = "block";
-
-  try {
-    let res;
-
-    if (hasSourceFile || hasCtaFile) {
-      // Multipart — use actual File objects (mix of file + URL not supported; require both as files)
-      if (!hasSourceFile || !hasCtaFile) {
-        throw new Error("When using file upload, both source and CTA must be files (not a mix of file + URL).");
-      }
-      const fd = new FormData();
-      fd.append("source", STITCH.sourceFile);
-      fd.append("cta",    STITCH.ctaFile);
-      fd.append("source_seconds", srcSec);
-      res = await fetch("/api/stitch-videos", { method: "POST", body: fd });
-    } else {
-      // JSON with URLs
-      res = await fetch("/api/stitch-videos", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ source: srcUrl, cta: ctaUrl, source_seconds: srcSec })
-      });
-    }
-
-    if (!res.ok) {
-      const t = await res.text().catch(() => res.statusText);
-      let msg = t;
-      try { msg = JSON.parse(t).error || t; } catch (_) {}
-      throw new Error(msg.slice(0, 300));
-    }
-
-    const data = await res.json();
-    document.getElementById("stitchResultPath").textContent = data.stitched_filepath || "";
-    const dlLink = document.getElementById("stitchDownloadLink");
-    dlLink.href     = data.download_url || "#";
-    dlLink.download = data.filename     || "stitched.mp4";
-    resultDiv.style.display = "block";
-    toast("🎬 Stitch complete! " + (data.message || ""), "ok");
-
-  } catch (e) {
-    errorDiv.textContent  = "⚠ " + e.message;
-    errorDiv.style.display = "block";
-    toast("Stitch failed: " + e.message, "fail");
-  }
-
-  btn.disabled           = false;
-  btn.innerHTML          = "🎬 Stitch Videos";
-  progress.style.display = "none";
-}
-
 // Expose for inline onclick / global use
-window.connect                     = connect;
-window.saveAnthropicKey            = saveAnthropicKey;
-window.generateCaption             = generateCaption;
-window.loadIntegrations            = loadIntegrations;
-window.loadSlideshowFromFolder     = loadSlideshowFromFolder;
-window.handleVideoFolderBrowse     = handleVideoFolderBrowse;
-window.handleFolderBrowse          = handleFolderBrowse;
-window.makePostFromFiles           = makePostFromFiles;
+window.connect                 = connect;
+window.loadIntegrations        = loadIntegrations;
+window.loadSlideshowFromFolder = loadSlideshowFromFolder;
+window.handleFolderBrowse      = handleFolderBrowse;
+window.makePostFromFiles       = makePostFromFiles;
 window.buildSlideshowPostFromPaths = buildSlideshowPostFromPaths;
-window.scheduleAll                 = scheduleAll;
-window.clearQueue                  = clearQueue;
-window.toggleDefaultAcc            = toggleDefaultAcc;
-window.selectAllChannels           = selectAllChannels;
-window.selectNoneChannels          = selectNoneChannels;
-window.syncPostsToDefault          = syncPostsToDefault;
-window.runStitch                   = runStitch;
-window.stitchFileChosen            = stitchFileChosen;
-window.stitchClearFile             = stitchClearFile;
+window.scheduleAll             = scheduleAll;
+window.clearQueue              = clearQueue;
 </script>
 </body>
 </html>"""
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Video stitching helpers (ported from nutrition-rag-chatbot /download-profile-videos)
-# ─────────────────────────────────────────────────────────────────────────────
-
-STITCH_OUTPUT_BASE = os.path.expanduser("~/Documents/stitched_profile_videos")
-
-
-def _probe_format_duration_sec(path: str):
-    """Best-effort container duration from ffprobe (seconds)."""
-    r = subprocess.run(
-        ["ffprobe", "-v", "quiet",
-         "-show_entries", "format=duration",
-         "-of", "default=noprint_wrappers=1:nokey=1",
-         path],
-        capture_output=True, text=True,
-    )
-    s = (r.stdout or "").strip()
-    if not s:
-        return None
-    try:
-        return float(s)
-    except ValueError:
-        return None
-
-
-def _stitch_videos_ffmpeg(
-    video1_path: str,
-    video2_path: str,
-    output_path: str,
-    *,
-    gap_seconds: float = 0,
-    source_prefix_seconds=None,
-) -> str:
-    """
-    Stitch [video1 (or its first source_prefix_seconds)] then [video2].
-    Audio for the entire output comes from video1 only (CTA audio is ignored).
-    Both clips are scaled to 1280x720 / 30fps / H.264 + AAC 128k.
-    """
-    scale_pad = (
-        "scale=1280:720:force_original_aspect_ratio=decrease,"
-        "pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30"
-    )
-
-    # Probe whether video1 has audio
-    _pr = subprocess.run(
-        ["ffprobe", "-v", "error",
-         "-select_streams", "a",
-         "-show_entries", "stream=codec_type",
-         "-print_format", "json",
-         video1_path],
-        capture_output=True, text=True,
-    )
-    try:
-        src_has_audio = bool(json.loads(_pr.stdout or "{}").get("streams"))
-    except (json.JSONDecodeError, ValueError):
-        src_has_audio = False
-
-    src_sec = (
-        float(source_prefix_seconds)
-        if source_prefix_seconds and float(source_prefix_seconds) > 0
-        else None
-    )
-    gap_sec = float(gap_seconds) if gap_seconds and float(gap_seconds) > 0 else 0.0
-
-    v1_dur = _probe_format_duration_sec(video1_path) or 0.0
-    v2_dur = _probe_format_duration_sec(video2_path) or 0.0
-    used_v1_dur = float(src_sec) if src_sec else v1_dur
-    total_dur = used_v1_dur + gap_sec + v2_dur
-
-    parts = []
-
-    # Video 1 — trim to src_sec or natural duration
-    if src_sec:
-        t = f"{src_sec:.6f}".rstrip("0").rstrip(".")
-    elif v1_dur > 0:
-        t = f"{v1_dur:.3f}"
-    else:
-        t = None
-
-    if t:
-        parts.append(f"[0:v]trim=start=0:duration={t},setpts=PTS-STARTPTS,{scale_pad}[vA]")
-    else:
-        parts.append(f"[0:v]{scale_pad}[vA]")
-
-    # Video 2 (CTA) — scale only, no audio taken from it
-    parts.append(f"[1:v]{scale_pad}[vB]")
-
-    # Video concat (with optional gap)
-    if gap_sec > 0:
-        gap_t = f"{gap_sec:.3f}"
-        parts.append(f"color=c=black:size=1280x720:rate=30:duration={gap_t},format=yuv420p[gv]")
-        parts.append("[vA][gv][vB]concat=n=3:v=1:a=0[outv]")
-    else:
-        parts.append("[vA][vB]concat=n=2:v=1:a=0[outv]")
-
-    # Audio from source only
-    extra_flags = []
-    if src_has_audio:
-        if total_dur > 0:
-            t_total = f"{total_dur:.3f}"
-            parts.append(
-                f"[0:a]atrim=start=0:duration={t_total},asetpts=PTS-STARTPTS,"
-                f"aresample=44100,aformat=channel_layouts=stereo[outa]"
-            )
-        else:
-            parts.append("[0:a]aresample=44100,aformat=channel_layouts=stereo[outa]")
-            extra_flags = ["-shortest"]
-    else:
-        if total_dur > 0:
-            t_total = f"{total_dur:.3f}"
-            parts.append(
-                f"aevalsrc=0|0:sample_rate=44100:channel_layout=stereo"
-                f":duration={t_total}[outa]"
-            )
-        else:
-            parts.append("aevalsrc=0|0:sample_rate=44100:channel_layout=stereo[outa]")
-            extra_flags = ["-shortest"]
-
-    filter_complex = ";".join(parts)
-
-    result = subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-stream_loop", "-1", "-i", video1_path,
-            "-i", video2_path,
-            "-filter_complex", filter_complex,
-            "-map", "[outv]",
-            "-map", "[outa]",
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "23",
-            "-c:a", "aac",
-            "-b:a", "128k",
-            "-movflags", "+faststart",
-            *extra_flags,
-            output_path,
-        ],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"FFmpeg stitch failed:\n{result.stderr[-800:]}")
-
-    return output_path
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2245,10 +1362,6 @@ class Handler(BaseHTTPRequestHandler):
             fpath = unquote(qs.get("path", [""])[0])
             self._serve_file(fpath)
 
-        elif path == "/api/stitch-download":
-            fpath = unquote(qs.get("path", [""])[0])
-            self._serve_stitched_download(fpath)
-
         else:
             self.send_response(404)
             self._cors()
@@ -2262,10 +1375,6 @@ class Handler(BaseHTTPRequestHandler):
             self._proxy_post("/posts")
         elif self.path == "/api/upload-from-path":
             self._handle_upload_from_path()
-        elif self.path == "/api/generate":
-            self._handle_generate()
-        elif self.path == "/api/stitch-videos":
-            self._handle_stitch_videos()
         else:
             self.send_response(404)
             self._cors()
@@ -2397,86 +1506,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    # ── Claude Vision caption generator ───────────────────────────────────────
-    def _handle_generate(self):
-        """Call Anthropic API with an image and return {title, caption, hashtags}."""
-        import re as _re
-        try:
-            length   = int(self.headers.get("Content-Length", 0))
-            raw      = self.rfile.read(length) if length else self.rfile.read()
-            data     = json.loads(raw)
-
-            image_b64  = data.get("image", "")
-            media_type = data.get("mediaType", "image/jpeg")
-            platforms  = data.get("platforms", [])
-            anth_key   = self.headers.get("X-Anthropic-Key", "").strip()
-
-            if not anth_key:
-                self._err("No Anthropic API key. Add it in the ✨ Claude Auto-Caption section.")
-                return
-            if not image_b64:
-                self._err("No image data received.")
-                return
-
-            platform_str = " and ".join(platforms) if platforms else "Instagram and TikTok"
-
-            prompt = (
-                f"Analyze this image and create social media content optimized for {platform_str}.\n\n"
-                "Return ONLY a JSON object — no markdown, no extra text — with exactly these fields:\n"
-                "{\n"
-                '  "title": "punchy title under 80 chars (good for YouTube/TikTok)",\n'
-                '  "caption": "engaging hook, 2-3 sentences, conversational tone, relevant emojis",\n'
-                '  "hashtags": "#tag1 #tag2 #tag3 ... (15-20 relevant hashtags, space-separated)"\n'
-                "}\n\n"
-                "Caption rules: start with a strong hook, speak directly to the viewer, no generic phrases.\n"
-                "Hashtags: mix of broad (#food) and niche (#sheetpandinners) tags."
-            )
-
-            body = json.dumps({
-                "model": "claude-opus-4-5",
-                "max_tokens": 900,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "image",
-                         "source": {"type": "base64",
-                                    "media_type": media_type,
-                                    "data": image_b64}},
-                        {"type": "text", "text": prompt}
-                    ]
-                }]
-            }).encode()
-
-            req = urllib.request.Request(
-                "https://api.anthropic.com/v1/messages",
-                data=body,
-                headers={
-                    "x-api-key":         anth_key,
-                    "anthropic-version": "2023-06-01",
-                    "Content-Type":      "application/json",
-                    "Accept":            "application/json",
-                },
-                method="POST"
-            )
-
-            with urllib.request.urlopen(req, timeout=45) as r:
-                resp = json.loads(r.read())
-
-            text = resp["content"][0]["text"].strip()
-            # Strip markdown code fences if Claude wrapped the JSON
-            text = _re.sub(r"^```(?:json)?\s*", "", text, flags=_re.MULTILINE)
-            text = _re.sub(r"\s*```$",          "", text, flags=_re.MULTILINE)
-            text = text.strip()
-
-            result = json.loads(text)
-            print(f"  [generate] title={result.get('title','')[:50]}")
-            self._ok(json.dumps(result).encode())
-
-        except urllib.error.HTTPError as e:
-            self._forward_error(e)
-        except Exception as e:
-            self._err(str(e))
-
     # ── Server-side upload from disk path ─────────────────────────────────────
     def _handle_upload_from_path(self):
         """Read a file from a disk path and proxy it to Postiz /upload."""
@@ -2539,150 +1568,6 @@ class Handler(BaseHTTPRequestHandler):
             self._forward_error(e)
         except Exception as e:
             self._err(str(e))
-
-    # ── Video stitcher ────────────────────────────────────────────────────────
-    def _handle_stitch_videos(self):
-        """
-        Accepts multipart/form-data (source + cta files) OR JSON (source_url + cta_url).
-        Optional field: source_seconds (default 5).
-        Runs FFmpeg stitch and returns the output file path + download URL.
-        """
-        os.makedirs(STITCH_OUTPUT_BASE, exist_ok=True)
-        tmp_dir = tempfile.mkdtemp(prefix="stitch_two_")
-        source_path = None
-        cta_path = None
-        try:
-            content_type = self.headers.get("Content-Type", "").lower()
-
-            if "multipart/form-data" in content_type:
-                # Parse multipart using cgi.FieldStorage
-                environ = {
-                    "REQUEST_METHOD": "POST",
-                    "CONTENT_TYPE":   self.headers["Content-Type"],
-                    "CONTENT_LENGTH": self.headers.get("Content-Length", "0"),
-                }
-                form = cgi.FieldStorage(fp=self.rfile, headers=self.headers, environ=environ)
-
-                f_src = form.get("source")
-                f_cta = form.get("cta")
-                source_seconds_raw = (form.getvalue("source_seconds") or "5")
-
-                if not f_src or not f_src.filename:
-                    self._err("multipart field 'source' (file) is required"); return
-                if not f_cta or not f_cta.filename:
-                    self._err("multipart field 'cta' (file) is required"); return
-
-                ext_s = os.path.splitext(f_src.filename)[1] or ".mp4"
-                ext_c = os.path.splitext(f_cta.filename)[1] or ".mp4"
-                source_path = os.path.join(tmp_dir, f"source{ext_s}")
-                cta_path    = os.path.join(tmp_dir, f"cta{ext_c}")
-
-                with open(source_path, "wb") as fh:
-                    fh.write(f_src.file.read())
-                with open(cta_path, "wb") as fh:
-                    fh.write(f_cta.file.read())
-
-            else:
-                # JSON body with URLs
-                length = int(self.headers.get("Content-Length", 0))
-                raw    = self.rfile.read(length) if length else self.rfile.read()
-                data   = json.loads(raw)
-
-                source_seconds_raw = data.get("source_seconds", 5)
-                src_url = (data.get("source") or data.get("source_url") or
-                           data.get("sourceVideoUrl") or "").strip()
-                cta_url = (data.get("cta") or data.get("cta_url") or
-                           data.get("ctaVideoUrl") or "").strip()
-
-                if not src_url:
-                    self._err("source URL is required (or send multipart files)"); return
-                if not cta_url:
-                    self._err("cta URL is required (or send multipart files)"); return
-
-                source_path = os.path.join(tmp_dir, "source.mp4")
-                cta_path    = os.path.join(tmp_dir, "cta.mp4")
-
-                def _dl(url, dest):
-                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-                    with urllib.request.urlopen(req, timeout=120) as r:
-                        with open(dest, "wb") as fh:
-                            fh.write(r.read())
-
-                _dl(src_url, source_path)
-                _dl(cta_url, cta_path)
-
-            # Validate files exist and non-empty
-            if not os.path.exists(source_path) or not os.path.getsize(source_path):
-                self._err("source video is missing or empty"); return
-            if not os.path.exists(cta_path) or not os.path.getsize(cta_path):
-                self._err("cta video is missing or empty"); return
-
-            try:
-                source_prefix_sec = float(source_seconds_raw)
-            except (TypeError, ValueError):
-                self._err("source_seconds must be a number"); return
-            if source_prefix_sec <= 0:
-                self._err("source_seconds must be positive"); return
-            source_prefix_sec = min(source_prefix_sec, 3600.0)
-
-            out_name     = f"stitched_{uuid.uuid4().hex}.mp4"
-            stitched_path = os.path.join(STITCH_OUTPUT_BASE, out_name)
-
-            print(f"  [stitch] {source_prefix_sec}s source + full CTA → {out_name}")
-            _stitch_videos_ffmpeg(
-                source_path, cta_path, stitched_path,
-                gap_seconds=0,
-                source_prefix_seconds=source_prefix_sec,
-            )
-            print(f"  [stitch] done → {stitched_path}")
-
-            result = json.dumps({
-                "message":          f"Stitched first {source_prefix_sec:g}s of source, then full CTA",
-                "stitched_filepath": stitched_path,
-                "filename":          out_name,
-                "download_url":      f"/api/stitch-download?path={urllib.parse.quote(stitched_path)}",
-                "source_seconds":    source_prefix_sec,
-            }).encode()
-            self._ok(result)
-
-        except RuntimeError as e:
-            self._err(f"FFmpeg stitching failed: {e}")
-        except Exception as e:
-            self._err(f"Stitch error: {e}")
-        finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    def _serve_stitched_download(self, file_path: str):
-        """Stream a stitched video file back to the browser as a download."""
-        file_path = os.path.expanduser(file_path.strip())
-        # Safety: only serve files inside STITCH_OUTPUT_BASE
-        real_path = os.path.realpath(file_path)
-        real_base = os.path.realpath(STITCH_OUTPUT_BASE)
-        if not real_path.startswith(real_base):
-            self.send_response(403)
-            self._cors()
-            self.end_headers()
-            return
-        if not os.path.isfile(real_path):
-            self.send_response(404)
-            self._cors()
-            self.end_headers()
-            return
-        mime = mimetypes.guess_type(real_path)[0] or "video/mp4"
-        filename = os.path.basename(real_path)
-        try:
-            with open(real_path, "rb") as fh:
-                data = fh.read()
-        except Exception as e:
-            self._err(str(e))
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", mime)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
-        self._cors()
-        self.end_headers()
-        self.wfile.write(data)
 
     # ── Proxy helpers ─────────────────────────────────────────────────────────
     def _auth(self):
@@ -2796,26 +1681,24 @@ class Handler(BaseHTTPRequestHandler):
 #  Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
-    host = "0.0.0.0"
-    url  = f"http://{host}:{PORT}"
+    url = f"http://localhost:{PORT}"
 
-    # Only open a browser tab when running locally (not on Render/CI)
-    if not os.environ.get("RENDER"):
-        def open_browser():
-            time.sleep(0.9)
-            webbrowser.open(f"http://localhost:{PORT}")
-        threading.Thread(target=open_browser, daemon=True).start()
+    def open_browser():
+        time.sleep(0.9)
+        webbrowser.open(url)
+
+    threading.Thread(target=open_browser, daemon=True).start()
 
     print()
     print("  ╔══════════════════════════════════════════╗")
     print(f"  ║  🚀  Postiz Bulk Scheduler               ║")
     print(f"  ║                                          ║")
-    print(f"  ║  Listening on port {PORT:<22}║")
+    print(f"  ║  Open:  {url:<33}║")
     print(f"  ║  Stop:  Ctrl + C                         ║")
     print("  ╚══════════════════════════════════════════╝")
     print()
 
-    server = HTTPServer((host, PORT), Handler)
+    server = HTTPServer(("localhost", PORT), Handler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
