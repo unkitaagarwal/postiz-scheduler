@@ -334,17 +334,6 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
   font-size: 12px; color: var(--muted); flex-shrink: 0;
 }
 
-/* ── Auto-fill button ── */
-.autofill-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  background: rgba(124,106,247,.15); border: 1px solid rgba(124,106,247,.35);
-  color: var(--accent); border-radius: 7px;
-  padding: 4px 10px; font-size: 11px; font-weight: 600;
-  cursor: pointer; transition: background .15s, border-color .15s;
-  font-family: inherit; white-space: nowrap;
-}
-.autofill-btn:hover { background: rgba(124,106,247,.28); border-color: var(--accent); }
-.autofill-btn:disabled { opacity: .45; cursor: not-allowed; }
 
 .cadence-settings {
   background: var(--card2); border-radius: 10px; padding: 16px;
@@ -424,21 +413,6 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
   </div>
 
   <!-- ── Anthropic API Key (for auto-caption) ── -->
-  <div class="card" id="anthropicCard">
-    <div class="section-label" style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      ✨ Claude Auto-Caption &nbsp;<span style="background:rgba(124,106,247,.18);color:var(--accent);border-radius:5px;padding:1px 7px;font-size:10px;font-weight:700">Optional</span>
-    </div>
-    <div class="key-row">
-      <input class="key-input" id="anthropicKeyInput" type="password"
-             placeholder="sk-ant-… (Anthropic API key for ✨ Auto-fill captions)">
-      <button class="btn btn-outline" id="saveAnthropicBtn" onclick="saveAnthropicKey()">Save</button>
-    </div>
-    <div style="margin-top:10px;font-size:12px;color:var(--muted)">
-      Get a key at
-      <a class="link" href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
-      &nbsp;·&nbsp; Used only locally to generate captions from your media.
-    </div>
-  </div>
 
   <!-- ── Connected Accounts / Channel Selector ── -->
   <div class="card hidden" id="intCard">
@@ -691,7 +665,6 @@ h1  { font-size: 24px; font-weight: 700; letter-spacing: -0.4px; }
 // ────────────────────────── State ──────────────────────────────────────────
 const S = {
   apiKey:          localStorage.getItem("postiz_key") || "",
-  anthropicKey:    localStorage.getItem("anthropic_key") || "",
   integrations:    [],
   defaultAccounts: new Set(),   // which channels new posts should default to
   posts:           [],
@@ -720,19 +693,10 @@ window.addEventListener("DOMContentLoaded", () => {
     document.getElementById("keyInput").value = S.apiKey;
     connect();
   }
-  if (S.anthropicKey) {
-    document.getElementById("anthropicKeyInput").value = S.anthropicKey;
-  }
   initDrop();
   initSchedMode();
 });
 
-function saveAnthropicKey() {
-  const key = document.getElementById("anthropicKeyInput").value.trim();
-  S.anthropicKey = key;
-  if (key) { localStorage.setItem("anthropic_key", key); toast("Anthropic key saved", "ok"); }
-  else      { localStorage.removeItem("anthropic_key"); toast("Anthropic key cleared", "ok"); }
-}
 
 // ────────────────────────── API helpers ────────────────────────────────────
 async function api(method, path, body, isForm) {
@@ -1567,10 +1531,9 @@ function cardHTML(p) {
     <div>
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
         <div class="field-label" style="margin:0">Caption</div>
-        <button class="autofill-btn" id="gen-${p.id}" onclick="generateCaption('${p.id}')">✨ Auto-fill</button>
       </div>
       <textarea class="caption-ta" id="cap-${p.id}" style="min-height:120px"
-        placeholder="Write your caption… or click ✨ Auto-fill">${esc(p.caption)}</textarea>
+        placeholder="Write your caption…">${esc(p.caption)}</textarea>
     </div>
     <div>
       <div class="field-label">Schedule Date &amp; Time</div>
@@ -1607,12 +1570,11 @@ function cardHTML(p) {
   ${editable ? `
   <div class="card-body">
     <div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px">
+      <div style="margin-bottom:7px">
         <div class="field-label" style="margin:0">Caption</div>
-        <button class="autofill-btn" id="gen-${p.id}" onclick="generateCaption('${p.id}')">✨ Auto-fill</button>
       </div>
       <textarea class="caption-ta" id="cap-${p.id}"
-        placeholder="Write your caption… or click ✨ Auto-fill">${esc(p.caption)}</textarea>
+        placeholder="Write your caption…">${esc(p.caption)}</textarea>
     </div>
     <div>
       <div class="field-label">Schedule Date &amp; Time</div>
@@ -1860,83 +1822,6 @@ function toast(msg, type = "") {
   }, 3800);
 }
 
-// ────────────────────────── Auto-caption (Claude Vision) ───────────────────
-async function generateCaption(postId) {
-  if (!S.anthropicKey) {
-    toast("Add your Anthropic API key in the ✨ Claude Auto-Caption section first", "fail");
-    return;
-  }
-
-  const p = S.posts.find(x => x.id === postId);
-  if (!p) return;
-
-  const btn = byId(`gen-${postId}`);
-  if (btn) { btn.disabled = true; btn.innerHTML = `<span class="spin"></span> Generating…`; }
-
-  try {
-    let imageB64, mediaType;
-
-    if (p.slideshow) {
-      // Use first slide as the reference image
-      if (p.fromFolder) {
-        const resp = await fetch(p.urls[0]);
-        const blob = await resp.blob();
-        mediaType = blob.type || "image/png";
-        imageB64 = await blobToBase64Strip(blob);
-      } else {
-        mediaType = p.files[0].type || "image/png";
-        imageB64 = await fileToBase64Strip(p.files[0]);
-      }
-    } else if (p.file.type.startsWith("video/")) {
-      mediaType  = "image/jpeg";
-      imageB64   = await extractVideoFrame(p.url);
-      if (!imageB64) throw new Error("Could not extract a frame from the video");
-    } else {
-      mediaType = p.file.type || "image/jpeg";
-      imageB64  = await fileToBase64Strip(p.file);
-    }
-
-    // Collect connected platform names for context
-    const platforms = [...new Set(
-      p.accounts.map(id => {
-        const int = S.integrations.find(i => i.id === id);
-        return int ? platform(int) : "";
-      }).filter(Boolean)
-    )];
-
-    const res = await fetch("/api/generate", {
-      method:  "POST",
-      headers: {
-        "Content-Type":    "application/json",
-        "Authorization":   S.apiKey,
-        "X-Anthropic-Key": S.anthropicKey
-      },
-      body: JSON.stringify({ image: imageB64, mediaType, platforms })
-    });
-
-    if (!res.ok) {
-      const t = await res.text().catch(() => res.statusText);
-      throw new Error(t.slice(0, 200));
-    }
-
-    const data = await res.json();
-
-    // Build full caption: hook + blank line + hashtags
-    const parts = [data.caption, data.hashtags].filter(Boolean);
-    p.caption   = parts.join("\n\n").trim();
-    p.postTitle = (data.title || p.postTitle || "").slice(0, 100);
-
-    // Patch textarea and title display live without full re-render
-    const ta = byId(`cap-${postId}`);
-    if (ta) ta.value = p.caption;
-    toast("✨ Caption generated!", "ok");
-
-  } catch (e) {
-    toast("Auto-fill failed: " + e.message, "fail");
-  }
-
-  if (btn) { btn.disabled = false; btn.innerHTML = "✨ Auto-fill"; }
-}
 
 // ── Read a File as base64 (strip data-URL prefix) ──────────────────────────
 function fileToBase64Strip(file) {
@@ -2215,8 +2100,6 @@ function stitchRenderResults(data) {
 
 // Expose for inline onclick / global use
 window.connect                     = connect;
-window.saveAnthropicKey            = saveAnthropicKey;
-window.generateCaption             = generateCaption;
 window.loadIntegrations            = loadIntegrations;
 window.loadSlideshowFromFolder     = loadSlideshowFromFolder;
 window.handleVideoFolderBrowse     = handleVideoFolderBrowse;
